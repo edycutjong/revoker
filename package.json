@@ -1,0 +1,28 @@
+{
+  "name": "revoker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Autonomous approval-drainer sentinel that lands approve(spender,0) through KeeperHub before the drain completes.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "spike": "tsx scripts/spike.ts",
+    "seed": "tsx scripts/seed.ts",
+    "watch": "tsx src/index.ts",
+    "bench": "tsx scripts/bench.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "viem": "^2.21.55"
+  }
+}
