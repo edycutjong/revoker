@@ -6,3 +6,6 @@ __pycache__/
 dist/
 coverage/
 .DS_Store
+contracts/out/
+contracts/cache/
+contracts/broadcast/

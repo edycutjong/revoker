@@ -21,15 +21,49 @@ KeeperHub — landing a real, linkable, state-changing transaction.
 
 Every claim below links to a transaction anyone can verify.
 
+### The headline: a real drain, really stopped
+
+The full cycle, executed on Sepolia. Every step is a transaction you can open.
+
+| # | Step | Transaction | Result |
+|---|---|---|---|
+| 1 | Victim grants `approve(spender, MAX_UINT256)` | [`0xfe39a5f4…017482`](https://sepolia.etherscan.io/tx/0xfe39a5f42d4967548751989c98b0a35971273752e009d90d70c3430d09017482) | allowance = `1.157e77` |
+| 2 | **Revoker fires `approve(spender, 0)`** via `check-and-execute` | [`0x325f6d51…7e09f9`](https://sepolia.etherscan.io/tx/0x325f6d51be89243ed26e8bceba973d41a7a9657addab6d1395210ddfbc7e09f9) | **allowance = 0**, in **11.3s** |
+| 3 | Drainer fires anyway | [`0xe127f3d2…a1a303`](https://sepolia.etherscan.io/tx/0xe127f3d2e2eb20a9825fbec63c56028815ce145c8cdd9e143a02600e2da1a303) | **takes 0. Funds intact.** |
+
+Step 3 is the one that matters. The drain transaction **succeeded** — it did not
+revert, it was not blocked, it ran exactly as its author intended. It simply had
+nothing left to take, because the approval was already gone. The victim's balance
+is unchanged at 10,000 mUSDC across the whole sequence.
+
+Verify it yourself, no credentials needed:
+
+```bash
+cast call 0x4facb5FD1682c4449cAD42b7590861f7eD5c88Cb \
+  "allowance(address,address)(uint256)" \
+  0x5E2e5Fd3aD7fDC9B94482930db8b5F45E439bab7 \
+  0x8eBf8540EdE8e40CD94825C418758d4029D8892e \
+  --rpc-url https://ethereum-sepolia-rpc.publicnode.com
+# 0
+```
+
+The condition was evaluated against the live chain, not a cached value —
+KeeperHub reported `observedValue: 115792089237316195423570985008687907853269984665640564039457584007913129639935`
+at execution time.
+
+### Supporting executions
+
 | What | Transaction |
 |---|---|
 | First execution via KeeperHub | [`0xacc7979a…c11409`](https://sepolia.etherscan.io/tx/0xacc7979a1c59a64764210f8a5a9068ad9243c5b2646cd02141ee1d3316c11409) |
 | `pnpm spike` — full integration proof | [`0x1f95fdd3…bf3d9d`](https://sepolia.etherscan.io/tx/0x1f95fdd3a519a74ef2e919f272bcc8c89d3e4175efde97bbd536f7e7bcbf3d9d) |
+| Funding the deploy key, via KeeperHub | [`0x00b4c5fb…e5c739`](https://sepolia.etherscan.io/tx/0x00b4c5fb4eacceaf3f273273b5035bf393fdd3fdfbe40672baf1f948b2e5c739) |
 
-Both verified independently of KeeperHub's own reporting, via public RPC
-`eth_getTransactionReceipt`. The spike transaction: block **11,440,768**,
-`status: 0x1`, sponsored, end-to-end latency **14.6s**. `pnpm spike` reproduces
-this and fails loudly if any step cannot be verified on-chain.
+All verified independently of KeeperHub's own reporting, via public RPC
+`eth_getTransactionReceipt`. `pnpm spike` reproduces the integration proof and
+fails loudly if any step cannot be verified on-chain.
+
+Contract addresses: [`deployments.json`](./deployments.json).
 
 ### Reading these links
 
@@ -126,9 +160,12 @@ SEPOLIA_RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
 
 This is an active hackathon build for
 [Agents Onchain](https://dorahacks.io/hackathon/agents-onchain) (KeeperHub).
-Shipped so far: KeeperHub client with retry/backoff and rate-limit pacing,
-credential resolution, and a verified integration spike. The watcher, threat
-rules, seed contracts, and benchmark land next.
+
+Shipped: KeeperHub client with retry/backoff, rate-limit pacing and idempotency;
+seed contracts deployed to Sepolia; a verified integration spike; and the
+complete detect→revoke→proof cycle above. Landing next: the autonomous watcher
+with three threat rules, unit tests, `scripts/bench.ts` (p50/p95 over N=25), and
+the live `/verify` stream.
 
 ## License
 

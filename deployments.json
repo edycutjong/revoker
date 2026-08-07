@@ -1,0 +1,22 @@
+{
+  "sepolia": {
+    "chainId": 11155111,
+    "explorer": "https://sepolia.etherscan.io",
+    "contracts": {
+      "MockUSDC": {
+        "address": "0x4facb5FD1682c4449cAD42b7590861f7eD5c88Cb",
+        "deployTx": "0x75691126bed3f47a6cfd011c80c1826a1946cd672383893b4e631eeba3000789",
+        "note": "6-decimal ERC-20 demo fixture. Open mint."
+      },
+      "RoachMotelSpender": {
+        "address": "0x8eBf8540EdE8e40CD94825C418758d4029D8892e",
+        "deployTx": "0x7eb8303e5a99c5f56ca34da480ef4759cfe4ad2f07964447621ca4c0ef209c1c",
+        "note": "Demonstration drain target. Owner-gated; inert once its approval is revoked."
+      }
+    },
+    "watchedWallet": {
+      "address": "0x5E2e5Fd3aD7fDC9B94482930db8b5F45E439bab7",
+      "note": "Org Turnkey smart account. Both the watched wallet and the revoke sender, because approve(spender,0) clears msg.sender's allowance and KeeperHub signs only for this account."
+    }
+  }
+}
