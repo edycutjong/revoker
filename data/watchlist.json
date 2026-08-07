@@ -1,0 +1,10 @@
+{
+  "$comment": "Tokens Revoker watches for approval exposure. Explicit by necessity: no public RPC serves address-less eth_getLogs over a useful block range, and KeeperHub's balances endpoint only covers a curated registry. Production would resolve this set from an indexer.",
+  "11155111": [
+    {
+      "address": "0x4facb5FD1682c4449cAD42b7590861f7eD5c88Cb",
+      "symbol": "mUSDC",
+      "label": "MockUSDC — demo fixture"
+    }
+  ]
+}

@@ -148,14 +148,67 @@ export class KeeperHub {
     return this.#request('/api/user/wallet')
   }
 
+  /**
+   * GET /api/user/wallet/balances — holdings across supported chains.
+   *
+   * Only covers KeeperHub's curated token registry, so it complements an
+   * explicit watchlist rather than replacing it.
+   */
+  async getWalletBalances(chainId: number = config.chainId): Promise<{
+    walletAddress: string
+    balances: Array<{
+      chainId: number
+      chainName: string
+      nativeBalance: string
+      tokens: Array<{ tokenAddress: string; symbol: string; balanceRaw: string }>
+    }>
+  }> {
+    return this.#request(`/api/user/wallet/balances?chainId=${chainId}`)
+  }
+
+  /** Token addresses this wallet actually holds a non-zero balance of. */
+  async getHeldTokens(chainId: number = config.chainId): Promise<string[]> {
+    try {
+      const { balances } = await this.getWalletBalances(chainId)
+      const chain = balances.find((b) => b.chainId === chainId)
+      return (chain?.tokens ?? [])
+        .filter((t) => t.balanceRaw !== '0')
+        .map((t) => t.tokenAddress)
+    } catch {
+      return []
+    }
+  }
+
   /** GET /api/chains — supported networks with explorer metadata. */
   async getChains(): Promise<Array<{ chainId: number; name: string; explorerUrl: string }>> {
     return this.#request('/api/chains')
   }
 
   /** GET /api/chains/{chainId}/abi?address= — explorer-backed ABI resolution. */
-  async getAbi(address: string, chainId: number = config.chainId): Promise<unknown> {
+  async getAbi(
+    address: string,
+    chainId: number = config.chainId,
+  ): Promise<{ success: boolean; abi?: unknown[]; error?: string; explorerUrl?: string }> {
     return this.#request(`/api/chains/${chainId}/abi?address=${address}`)
+  }
+
+  /**
+   * Whether the contract's source is verified on the block explorer.
+   *
+   * Derived from ABI resolution: KeeperHub returns `success: false` with
+   * "Contract source code is not verified" for unverified contracts. Unverified
+   * source is not proof of malice, but it means nobody can read what the code
+   * actually does — which is exactly the position a victim is in when they
+   * grant an unlimited approval.
+   */
+  async isSourceVerified(address: string, chainId: number = config.chainId): Promise<boolean> {
+    try {
+      return (await this.getAbi(address, chainId)).success === true
+    } catch {
+      // Treat a lookup failure as "unknown", not "verified" — failing open here
+      // would silently disable the rule.
+      return false
+    }
   }
 
   /** Read a view/pure function. Returns immediately, costs no gas. */

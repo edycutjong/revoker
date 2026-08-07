@@ -1,0 +1,13 @@
+{
+  "$comment": "Seeded deny-list of spender addresses. Demo-scale by design: a production deployment would sync a maintained feed. Entries are testnet fixtures unless marked otherwise.",
+  "updated": "2026-08-08",
+  "addresses": [
+    {
+      "address": "0x8eBf8540EdE8e40CD94825C418758d4029D8892e",
+      "chainId": 11155111,
+      "label": "RoachMotelSpender",
+      "reason": "Demo drain target deployed for this project. Pulls any approved balance to its owner.",
+      "source": "self"
+    }
+  ]
+}
