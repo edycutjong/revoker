@@ -14,6 +14,10 @@ export default defineConfig({
     exclude: ['node_modules/**', 'e2e/**', 'contracts/**'],
     coverage: {
       provider: 'v8',
+      // json-summary feeds the CI step that writes the numbers into the run
+      // summary — coverage that only exists inside a downloadable artifact is
+      // coverage nobody ever looks at.
+      reporter: ['text', 'json-summary', 'html'],
       // Still reported across scripts/ as well, because a module at 0% is
       // information rather than noise — but only src/ is gated. scripts/ are
       // one-shot operational entrypoints (seed arms a real approval, spike

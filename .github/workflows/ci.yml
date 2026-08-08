@@ -45,6 +45,35 @@ jobs:
       - name: Unit tests with coverage
         run: pnpm test:coverage
 
+      # Put the numbers on the run page. An artifact is where coverage goes to
+      # be ignored; the job summary is the first thing anyone actually reads.
+      - name: Coverage summary
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, pathlib
+          f = pathlib.Path('coverage/coverage-summary.json')
+          if not f.exists():
+              print('Coverage summary not produced.'); raise SystemExit(0)
+          d = json.loads(f.read_text())
+          tot = d.pop('total')
+          print('## TypeScript coverage\n')
+          print('| metric | % | covered / total |')
+          print('|---|---|---|')
+          for m in ('statements', 'branches', 'functions', 'lines'):
+              v = tot[m]
+              print(f"| {m} | **{v['pct']}%** | {v['covered']} / {v['total']} |")
+          rows = sorted((k, v) for k, v in d.items() if '/src/' in k)
+          if rows:
+              print('\n<details><summary>Per file (src/)</summary>\n')
+              print('| file | stmts | branch | funcs |')
+              print('|---|---|---|---|')
+              for k, v in rows:
+                  print(f"| `{k.split('/src/')[-1]}` | {v['statements']['pct']}% "
+                        f"| {v['branches']['pct']}% | {v['functions']['pct']}% |")
+              print('\n</details>')
+          PY
+
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4

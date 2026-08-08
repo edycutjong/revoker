@@ -33,6 +33,7 @@
   [![CI](https://github.com/edycutjong/revoker/actions/workflows/ci.yml/badge.svg)](https://github.com/edycutjong/revoker/actions/workflows/ci.yml)
   [![Release](https://img.shields.io/github/v/release/edycutjong/revoker?display_name=tag&sort=semver&color=35d07f)](https://github.com/edycutjong/revoker/releases/latest)
   [![Coverage](https://img.shields.io/badge/contract_coverage-100%25-35d07f)](./contracts/test)
+  [![src coverage](https://img.shields.io/badge/src_coverage-100%25-35d07f)](./vitest.config.ts)
 
 </div>
 
@@ -145,7 +146,7 @@ does not.
 | Contracts | Solidity 0.8.28, Foundry | Dependency-free fixtures, so the demo reproduces with no package installs |
 | Runtime | TypeScript strict, Node 22 | `noUncheckedIndexedAccess`, `verbatimModuleSyntax` |
 | Dashboard | Node `http` + SSE, zero-dependency HTML | No CDN, no build step |
-| Tests | Vitest + Foundry | 44 unit + 42 Solidity (100% contract coverage), weighted toward the negatives |
+| Tests | Vitest + Foundry | 157 unit + 42 Solidity + 34 E2E — 100% coverage on `src/` and on the contracts, weighted toward the negatives |
 
 ### Threat rules
 
