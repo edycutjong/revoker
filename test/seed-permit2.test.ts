@@ -312,7 +312,7 @@ describe('seed-permit2.ts — the expiration trips permit2-long-lived', () => {
       currentBlock: 0n,
       // The spender is an unverified throwaway deploy, which is the second half
       // of the rule's condition.
-      kh: { isSourceVerified: () => Promise.resolve(false) } as unknown as KeeperHubClient,
+      kh: { sourceVerification: () => Promise.resolve('unverified') } as unknown as KeeperHubClient,
       denylist: new Set<string>(),
       permit2: { expiration, nonce: 0, chainTimeSeconds: CHAIN_TIME },
     })

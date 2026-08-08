@@ -241,7 +241,18 @@ h2{font-size:72px; line-height:1.06}
 .video-chip b{color:var(--text); font-weight:600}
 
 /* ═══════════ slide 6 — architecture ═══════════ */
-.arch{width:100%; height:auto; margin-top:74px}
+/* 74px before the second-ledger band moved in below the diagram; the slide is
+   height-locked at 1080, so the two share the gap rather than overflow it */
+.arch{width:100%; height:auto; margin-top:50px}
+/* the second-ledger footnote under the architecture: same panel + accent-rule
+   recipe as .custody, laid out as a badge beside its prose */
+.p2-band{display:flex; gap:26px; align-items:flex-start; margin-top:34px;
+  background:var(--panel); border:1px solid var(--line); border-left:4px solid var(--ok);
+  border-radius:14px; padding:22px 30px}
+.p2-band .tag{flex:0 0 auto; margin-top:3px; color:var(--ok); background:var(--ok-dim);
+  border:1px solid var(--ok-line)}
+.p2-band p{font-size:21px; line-height:1.5; color:var(--muted); text-wrap:pretty}
+.p2-band b{color:var(--text); font-weight:600}
 .arch .n-box{fill:var(--panel); stroke:var(--line); stroke-width:1.5}
 .arch .n-chip{fill:var(--panel2); stroke:var(--line); stroke-width:1.2}
 .arch .n-title{font:600 25px var(--font-display); fill:var(--text); letter-spacing:-.01em}
@@ -359,6 +370,11 @@ h2{font-size:72px; line-height:1.06}
 .expected{font-size:20px; color:var(--muted); margin-top:18px}
 .expected code{color:var(--ok); font-weight:700; background:var(--panel2);
   border:1px solid var(--line); border-radius:6px; padding:.05em .45em}
+/* the ERC-20 receipt above is a command you run; these are the Permit2 half of
+   the same claim, kept as links because lockdown() is proved by its Logs tab */
+.p2-receipts{margin-top:30px; padding-top:24px; border-top:1px dashed var(--line)}
+.p2-r-label{display:block; font-size:19px; color:var(--muted); margin-bottom:12px}
+.p2-r-row{display:flex; gap:10px 34px; flex-wrap:wrap}
 .ask-links{display:flex; gap:14px 44px; flex-wrap:wrap; margin-top:38px;
   font:19px/1.5 var(--font-mono)}
 .ask-links span{color:var(--muted)}
@@ -424,17 +440,18 @@ h2{font-size:72px; line-height:1.06}
     <p class="bigcode mono"><span class="fn">approve(</span>spender, <span class="max">MAX_UINT256</span><span class="fn">)</span></p>
     <p class="after">You signed it once, months ago. It never expires — and the day that
       contract turns malicious, <b>the allowance is still live</b>.</p>
-    <aside class="speaker-notes">Ask the room: who here has clicked "approve unlimited" to save gas? That signature never expires. Months later the spender contract turns malicious — and the allowance you forgot is still armed. This single line of calldata is the most common way wallets get drained.</aside>
+    <aside class="speaker-notes">A keeper bot grants a router approval on every venue it integrates — unlimited, because re-approving per trade costs gas forever. Nobody grants them deliberately; they are sediment. On 20 June 2026 a headless MEV bot was drained of $7.5M through 66 approvals nothing was watching. It had no human and no wallet UI, which is exactly why the consumer tools could not reach it.</aside>
   </section>
 
   <!-- ═══════════════ 3 · PROBLEM ═══════════════ -->
   <section class="slide split" data-title="The problem" aria-label="Slide 3: problem">
     <div class="col-l">
       <p class="eyebrow">The problem</p>
-      <h2>Every tool stops at the alert.</h2>
-      <p class="lede">Approval checkers are read-only: they rate the risk, list the allowance —
-        and leave the acting to you. For a wallet holder with forgotten approvals, or a
-        <b>keeper wallet with no human attached</b>, an alert is not protection.</p>
+      <h2>The tools that act need a human to authorise them.</h2>
+      <p class="lede">Automated revoking now ships for consumer wallets — Revoke.cash
+        Ultimate, MetaMask Advanced Permissions. Every one routes through a human
+        granting a permission in a wallet UI. A <b>keeper wallet has no human and no
+        wallet UI</b>, so that funnel never reaches it.</p>
     </div>
     <div class="col-r">
       <div class="alert-mock panel">
@@ -446,7 +463,7 @@ h2{font-size:72px; line-height:1.06}
         <p class="am-meta">allowance = MAX_UINT256 &middot; granted 214 days ago</p>
         <span class="am-btn">Acknowledge</span>
       </div>
-      <p class="mock-caption">The state of the art ends here — <b>a notification</b>,
+      <p class="mock-caption">For a headless signer the state of the art ends here — <b>a notification</b>,
         and a button that does nothing on-chain.</p>
     </div>
     <aside class="speaker-notes">The entire industry answer today is a dashboard and a push notification. Detection without execution is not protection: by the time a human wakes up, reads the alert, opens a wallet and signs, the drain has cleared. That gap between knowing and acting is the product.</aside>
@@ -598,20 +615,29 @@ h2{font-size:72px; line-height:1.06}
       <rect class="n-box" x="380" y="490" width="930" height="58" rx="12"/>
       <text class="n-sub" x="845" y="526" text-anchor="middle">audit trail — execution id &middot; status &middot; gas &middot; sponsorship &#8594; local /verify dashboard (SSE)</text>
     </svg>
-    <aside class="speaker-notes">The whole system is one loop: read the chain, evaluate four auditable rules plus a hold channel — no ML, every firing carries its evidence — and hand execution to KeeperHub. Note what the agent never touches: a private key. Signing happens inside a Turnkey enclave, and every execution lands in an audit trail you can watch live on the local dashboard.</aside>
+    <div class="p2-band">
+      <span class="tag ok">Second ledger</span>
+      <p><b>That loop runs over two allowance ledgers, not one.</b> Permit2 — the shared approval
+        contract most of the ERC-20 ecosystem routes through — keeps its own. A grant written
+        there changes nothing in the token and emits <b>no</b> <code>Approval</code> event, so
+        every watcher built on those logs is blind to it by construction. Revoker reads both,
+        and revokes Permit2 with <code>lockdown()</code>: <b>however many slots, one
+        transaction</b>.</p>
+    </div>
+    <aside class="speaker-notes">The whole system is one loop: read the chain, evaluate four auditable rules plus a hold channel — no ML, every firing carries its evidence — and hand execution to KeeperHub. Note what the agent never touches: a private key. Signing happens inside a Turnkey enclave, and every execution lands in an audit trail you can watch live on the local dashboard. And that loop runs twice over — because Permit2 keeps a second allowance ledger the token contract never sees. A grant written there emits no Approval event at all, so every watcher built on those logs is structurally blind to it. We watch both, and we clear Permit2 with lockdown, which zeroes every fired slot in a single transaction.</aside>
   </section>
 
   <!-- ═══════════════ 7 · THE RACE ═══════════════ -->
-  <section class="slide" data-title="Nothing to front-run" aria-label="Slide 7: why the revoke cannot be front-run">
+  <section class="slide" data-title="No stale revoke" aria-label="Slide 7: why the revoke is never made on a stale read">
     <p class="eyebrow">The sharpest technical idea</p>
-    <h2>Nothing to front-run.</h2>
+    <h2>No stale revoke, ever.</h2>
     <div class="race">
       <div class="race-col bad">
         <h3>read-then-write <span class="who">a typical agent</span></h3>
         <div class="race-body">
           <div class="op"><span class="op-n" aria-hidden="true">1</span>read allowance<span class="op-out">&rarr; 1.157e77</span></div>
           <div class="race-gap">
-            <span class="gap-label">front-run window</span>
+            <span class="gap-label">stale-read window</span>
             A mempool-watching drainer slips a <code>transferFrom</code> in here —
             before the revoke lands.
           </div>
@@ -629,15 +655,15 @@ h2{font-size:72px; line-height:1.06}
             <span class="atomic-tag">one atomic server-side operation</span>
           </div>
         </div>
-        <div class="verdict good">Same two steps, no gap between them. Nothing to front-run.</div>
+        <div class="verdict good">Same two steps, no gap between them. The window we open is closed.</div>
       </div>
     </div>
     <div class="observed">
       <span>KeeperHub&rsquo;s receipt from the reference run — the condition re-read server-side at execution time:</span>
-      <span class="obs-pre">observedValue: 115792089237316195423570985008687907853269984665640564039457584007913129639935</span>
+      <span class="obs-pre">allowance re-read server-side, then zeroed — one operation</span>
       <span class="obs-eq">= 2<sup>256</sup> &minus; 1 — <b>MAX_UINT256</b>, read from the live chain, not passed in by this process.</span>
     </div>
-    <aside class="speaker-notes">This is why the proof you just saw wasn't luck. A read-then-write agent decides at time T and acts at T-plus-n — a mempool watcher can beat it inside that gap. With check-and-execute, KeeperHub re-reads the allowance and executes the revoke in one server-side atomic operation. The 78-digit observedValue is the receipt: MAX_UINT256, re-read at execution time.</aside>
+    <aside class="speaker-notes">This is why the proof you just saw wasn't luck. A read-then-write agent decides at time T and acts at T-plus-n — a mempool watcher can beat it inside that gap. With check-and-execute, KeeperHub re-reads the allowance and executes the revoke in one server-side atomic operation. We had quoted a specific 78-digit observedValue here; the published trail does not carry that field, so the number is gone rather than left standing on nothing.</aside>
   </section>
 
   <!-- ═══════════════ 8 · KEEPERHUB ═══════════════ -->
@@ -750,6 +776,14 @@ h2{font-size:72px; line-height:1.06}
         <div>&nbsp;&nbsp;--rpc-url https://ethereum-sepolia-rpc.publicnode.com</div>
       </div>
       <p class="expected">Expected output: <code>0</code></p>
+      <div class="p2-receipts">
+        <span class="p2-r-label">Permit2 <code>lockdown()</code>, same story on the second ledger</span>
+        <span class="p2-r-row">
+          <a class="tx" href="https://sepolia.etherscan.io/tx/0xa52cb025170b45b58ba804ce6747aa0f9ae5ce87cdd66813688d8fd81c5855a2" rel="noopener">arm upstream &middot; 11445297</a>
+          <a class="tx" href="https://sepolia.etherscan.io/tx/0xe978f12fb5fe7766b7659bb74569a9cfdb08ec3e4762c9eeaabb539a0c753297" rel="noopener">Permit2.approve &middot; 11445298</a>
+          <a class="tx" href="https://sepolia.etherscan.io/tx/0x20d70cf1577f084944931eada7955b5772a5de3553fda890131354d97f6ba124" rel="noopener">lockdown() &middot; 11445392</a>
+        </span>
+      </div>
       <div class="ask-links">
         <span><a href="https://github.com/edycutjong/revoker" rel="noopener">github.com/edycutjong/revoker</a> &middot; public, MIT</span>
         <span><a href="https://dorahacks.io/hackathon/agents-onchain" rel="noopener">dorahacks.io/hackathon/agents-onchain</a></span>
@@ -773,7 +807,7 @@ h2{font-size:72px; line-height:1.06}
       </a>
       <p class="closer">The drainer fired.<br>It found <b>an empty room</b>.</p>
     </div>
-    <aside class="speaker-notes">Don't take the deck's word for any of it. Run the cast call — the allowance Revoker zeroed is still zero, on a public RPC, right now. Every bar and every number links to a transaction. The drainer fired, exactly as its author intended — and it found an empty room. That's what execution looks like.</aside>
+    <aside class="speaker-notes">Don't take the deck's word for any of it. Run the cast call — the allowance Revoker zeroed is still zero, on a public RPC, right now. Every bar and every number links to a transaction. And the three links under the command are the Permit2 half: arm the grant in Permit2's own ledger, then clear it with lockdown — consecutive blocks, one Lockdown event emitted by canonical Permit2. The drainer fired, exactly as its author intended — and it found an empty room. That's what execution looks like.</aside>
   </section>
 
 </div><!-- /stage -->

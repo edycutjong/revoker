@@ -68,7 +68,7 @@ const keeperhubMock = vi.hoisted(() => ({ constructed: vi.fn() }))
 vi.mock('../src/keeperhub.js', () => ({
   KeeperHub: class {
     getHeldTokens = vi.fn().mockResolvedValue([])
-    isSourceVerified = vi.fn().mockResolvedValue(true)
+    sourceVerification = vi.fn().mockResolvedValue('verified')
     simulate = vi.fn()
     constructor() {
       keeperhubMock.constructed()
@@ -76,7 +76,10 @@ vi.mock('../src/keeperhub.js', () => ({
   },
 }))
 
+/** Blessed spenders in the production wiring, controllable per test. */
+const configState = vi.hoisted((): { allowlist: string[] } => ({ allowlist: [] }))
 vi.mock('../src/config.js', () => ({
+  loadAllowlist: () => new Set(configState.allowlist),
   config: {
     walletAddress: OWNER,
     chainId: 11155111,
@@ -152,7 +155,7 @@ async function flushMicrotasks(): Promise<void> {
 function makeKh(overrides: Record<string, unknown> = {}) {
   return {
     getHeldTokens: vi.fn().mockResolvedValue([]),
-    isSourceVerified: vi.fn().mockResolvedValue(true),
+    sourceVerification: vi.fn().mockResolvedValue('verified'),
     simulate: vi.fn().mockResolvedValue({
       success: true,
       status: 'simulated',
@@ -173,6 +176,7 @@ function makeCtx(overrides: Partial<McpContext> = {}): McpContext {
     kh: makeKh() as unknown as KeeperHub,
     tokens: [TOKEN],
     denylist: new Set<string>(),
+    allowlist: new Set<string>(),
     lookbackBlocks: 5_000n,
     ...overrides,
   }
@@ -438,7 +442,7 @@ describe('list_exposures', () => {
 
 describe('explain_exposure — the evidence, not a summary of it', () => {
   it('returns every rule that fired, each with the chain fact behind it', async () => {
-    const kh = makeKh({ isSourceVerified: vi.fn().mockResolvedValue(false) })
+    const kh = makeKh({ sourceVerification: vi.fn().mockResolvedValue('unverified') })
     chainMocks.hasCodeAt.mockResolvedValue(false)
     chainMocks.findDeploymentBlock.mockResolvedValue(HEAD - 7_200n) // ~1 day old
 
@@ -461,7 +465,11 @@ describe('explain_exposure — the evidence, not a summary of it', () => {
     // The evidence is the point of the surface: an investigator has to be able
     // to re-derive the verdict, not take "malicious: true" on faith.
     const unlimited = explanation.fired.find((v) => v.rule === 'unlimited-to-unverified')
-    expect(unlimited?.evidence).toEqual({ allowance: 'MAX_UINT256', sourceVerified: false })
+    expect(unlimited?.evidence).toEqual({
+      allowance: 'MAX_UINT256',
+      sourceVerified: false,
+      sourceVerification: 'unverified',
+    })
 
     const young = explanation.fired.find((v) => v.rule === 'young-spender')
     expect(young?.evidence['ageDays']).toBeCloseTo(1, 1)
@@ -495,6 +503,7 @@ describe('explain_exposure — the evidence, not a summary of it', () => {
 
     expect(explanation.catalogue.map((r) => r.id).sort()).toEqual([
       'denylisted',
+      'operator-allowlisted',
       'permit2-long-lived',
       'unlimited-to-unverified',
       'upstream-permit2-approval',
@@ -508,7 +517,7 @@ describe('explain_exposure — the evidence, not a summary of it', () => {
     // ACTION is refused. A human reading this is being told both facts.
     // An explorer blip reporting Permit2's source as unverified is exactly how
     // the loop would talk itself into revoking the wallet's widest approval.
-    const kh = makeKh({ isSourceVerified: vi.fn().mockResolvedValue(false) })
+    const kh = makeKh({ sourceVerification: vi.fn().mockResolvedValue('unverified') })
     const explanation = await mcp.explainExposure(
       makeCtx({ kh: kh as unknown as KeeperHub }),
       TOKEN,
@@ -522,7 +531,7 @@ describe('explain_exposure — the evidence, not a summary of it', () => {
   })
 
   it('explains a Permit2 exposure against its expiration and the chain clock', async () => {
-    const kh = makeKh({ isSourceVerified: vi.fn().mockResolvedValue(false) })
+    const kh = makeKh({ sourceVerification: vi.fn().mockResolvedValue('unverified') })
     const explanation = await mcp.explainExposure(
       makeCtx({ kh: kh as unknown as KeeperHub }),
       TOKEN,

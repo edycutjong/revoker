@@ -30,6 +30,8 @@ const ENV_KEYS = [
   'PORT',
   'REVOKER_AUDIT_LOG',
   'REVOKER_DEMO',
+  'REVOKER_ALLOWLIST',
+  'REVOKER_MAX_REVOKES_PER_DAY',
 ] as const
 
 const savedEnv: Partial<Record<(typeof ENV_KEYS)[number], string>> = {}
@@ -63,11 +65,19 @@ afterEach(() => {
  * files config.ts reads, and to fail exactly like a missing file (ENOENT) for
  * anything else — mirroring parseEnvFile's own try/catch-returns-{} behaviour.
  */
-async function mockFiles(files: { dotenv?: string; keeperhub?: string }): Promise<void> {
+async function mockFiles(files: {
+  dotenv?: string
+  keeperhub?: string
+  /** data/allowlist.json, read by loadAllowlist() rather than at module load. */
+  allowlist?: string
+}): Promise<void> {
   const fs = await import('node:fs')
   vi.mocked(fs.readFileSync).mockImplementation((path: PathOrFileDescriptor) => {
     if (path === DOTENV_PATH && files.dotenv !== undefined) return files.dotenv
     if (path === KEEPERHUB_PATH && files.keeperhub !== undefined) return files.keeperhub
+    if (String(path).endsWith('allowlist.json') && files.allowlist !== undefined) {
+      return files.allowlist
+    }
     const err = new Error('ENOENT: no such file or directory') as NodeJS.ErrnoException
     err.code = 'ENOENT'
     throw err
@@ -401,5 +411,102 @@ describe('explorerTxUrl', () => {
   it('uses the default explorer base when unset', async () => {
     const { explorerTxUrl } = await import('../src/config.js')
     expect(explorerTxUrl('0xabc123')).toBe('https://sepolia.etherscan.io/tx/0xabc123')
+  })
+})
+
+/**
+ * The two safety rails config.ts owns. Both are documented in .env.example, so
+ * both have to resolve through the same chain as every other key — and both
+ * fail in a direction someone has to be able to reason about.
+ */
+describe('maxRevokesPerDay — the autonomous revoke ceiling', () => {
+  it('defaults to 12 when nothing is configured', async () => {
+    const { config } = await import('../src/config.js')
+    expect(config.maxRevokesPerDay).toBe(12)
+  })
+
+  it('takes an explicit positive integer from the environment', async () => {
+    process.env['REVOKER_MAX_REVOKES_PER_DAY'] = '3'
+    const { config } = await import('../src/config.js')
+    expect(config.maxRevokesPerDay).toBe(3)
+  })
+
+  it('resolves through ~/.config/keeperhub/env like every other key', async () => {
+    await mockFiles({ keeperhub: 'REVOKER_MAX_REVOKES_PER_DAY=5' })
+    const { config } = await import('../src/config.js')
+    expect(config.maxRevokesPerDay).toBe(5)
+  })
+
+  it.each([
+    ['not-a-number', 'a typo'],
+    ['0', 'an agent that would never revoke anything'],
+    ['-4', 'a negative budget'],
+    ['2.5', 'a fractional revoke'],
+    ['Infinity', 'the rail switched off by accident'],
+  ])('falls back to the documented default on %s, loudly', async (raw) => {
+    // A ceiling that parses to garbage must not silently become Infinity (the
+    // rail off) or 0 (an agent that has quietly stopped defending anything).
+    // Either way the operator believes they configured a number.
+    process.env['REVOKER_MAX_REVOKES_PER_DAY'] = raw
+    const { config } = await import('../src/config.js')
+
+    expect(config.maxRevokesPerDay).toBe(12)
+    expect(vi.mocked(console.warn).mock.calls.flat().join(' ')).toContain(
+      'REVOKER_MAX_REVOKES_PER_DAY',
+    )
+  })
+})
+
+describe('loadAllowlist — spenders the operator has blessed', () => {
+  it('reads data/allowlist.json and lower-cases every address', async () => {
+    await mockFiles({
+      allowlist: JSON.stringify({
+        addresses: [{ address: '0x000000000022D473030F116dDEE9F6B43aC78BA3' }],
+      }),
+    })
+    const { loadAllowlist } = await import('../src/config.js')
+
+    // Checksum casing is how a real allow-list silently stops matching.
+    expect([...loadAllowlist()]).toEqual(['0x000000000022d473030f116ddee9f6b43ac78ba3'])
+  })
+
+  it('adds REVOKER_ALLOWLIST on top of the file, trimmed and lower-cased', async () => {
+    await mockFiles({ allowlist: JSON.stringify({ addresses: [{ address: '0xAAA' }] }) })
+    process.env['REVOKER_ALLOWLIST'] = ' 0xBBB , 0xccc ,'
+    const { loadAllowlist } = await import('../src/config.js')
+
+    // The trailing empty segment must not become a blessed empty address.
+    expect([...loadAllowlist()].sort()).toEqual(['0xaaa', '0xbbb', '0xccc'])
+  })
+
+  it('resolves REVOKER_ALLOWLIST through the config files too', async () => {
+    await mockFiles({ keeperhub: 'REVOKER_ALLOWLIST=0xfromfile' })
+    const { loadAllowlist } = await import('../src/config.js')
+    expect([...loadAllowlist()]).toEqual(['0xfromfile'])
+  })
+
+  it('degrades to no blessings when the file is missing', async () => {
+    const { loadAllowlist } = await import('../src/config.js')
+    expect(loadAllowlist().size).toBe(0)
+  })
+
+  it('degrades to no blessings when the file is malformed, rather than throwing', async () => {
+    // Fails toward "nothing is blessed", which can only ever make the agent MORE
+    // willing to revoke. A corrupt file must never be a way to smuggle an
+    // address past a rule, and must never stop the sentinel from starting.
+    await mockFiles({ allowlist: '{ not json' })
+    const { loadAllowlist } = await import('../src/config.js')
+    expect(loadAllowlist().size).toBe(0)
+  })
+
+  it('tolerates a file with no addresses array and entries with no address', async () => {
+    await mockFiles({ allowlist: JSON.stringify({ addresses: [{ label: 'no address here' }] }) })
+    const { loadAllowlist } = await import('../src/config.js')
+    expect(loadAllowlist().size).toBe(0)
+
+    vi.resetModules()
+    await mockFiles({ allowlist: JSON.stringify({ updated: '2026-08-08' }) })
+    const again = await import('../src/config.js')
+    expect(again.loadAllowlist().size).toBe(0)
   })
 })

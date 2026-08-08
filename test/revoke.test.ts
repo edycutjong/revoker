@@ -1120,3 +1120,293 @@ describe('revokePermit2Allowances — the escalation ladder, reused verbatim', (
     expect(stagesOf('revoke.failed')).toHaveLength(0)
   })
 })
+
+/**
+ * ── Publishing KeeperHub's executionId ───────────────────────────────────────
+ *
+ * A transaction hash proves that a revoke landed. It does not prove HOW: read
+ * from the explorer alone, the write is a relayer address calling `approve`, and
+ * "executed via KeeperHub" is left as an inference. The executionId is the
+ * missing half — it addresses KeeperHub's own record of the submission, so the
+ * guarded check-and-execute behind the hash can be looked up rather than
+ * assumed.
+ *
+ * The audit trail is the only place that record can be joined to the chain, so
+ * every stage that names a transaction names the execution too, on both revoke
+ * paths. These tests exist because the field is easy to add to the happy path
+ * and easy to forget on the four endings nobody demos.
+ */
+describe('the audit trail names the KeeperHub execution, not just the transaction', () => {
+  const CONDITION = { met: true, observedValue: '999', targetValue: '0', operator: 'gt' }
+  const PAIR_A = { token: TOKEN, spender: SPENDER }
+
+  let entries: AuditEntry[]
+  let unsubscribe: () => void
+
+  beforeEach(() => {
+    entries = []
+    unsubscribe = onAudit((entry) => entries.push(entry))
+  })
+
+  afterEach(() => unsubscribe())
+
+  const stagesOf = (stage: string): AuditEntry[] => entries.filter((e) => e.stage === stage)
+  const lastOf = (stage: string): AuditEntry => stagesOf(stage).at(-1)!
+
+  /** An execution that reaches `status` immediately, so no fake clock is needed. */
+  function landsWith(status: Record<string, unknown>): KeeperHub {
+    return fakeKh({
+      checkAndExecute: vi
+        .fn()
+        .mockResolvedValue({ executed: true, executionId: 'exec-77', condition: CONDITION }),
+      getExecutionStatus: vi.fn().mockResolvedValue({ executionId: 'exec-77', ...status }),
+    })
+  }
+
+  describe('ERC-20 approve(spender, 0)', () => {
+    it('records the executionId on the submit and on the confirmation', async () => {
+      const kh = landsWith({ status: 'completed', transactionHash: '0xhash', sponsored: true })
+      vi.mocked(readAllowance).mockResolvedValue(0n)
+
+      const outcome = await revokeApproval({ kh, token: TOKEN, owner: OWNER, spender: SPENDER })
+
+      expect(outcome.executionId).toBe('exec-77')
+      // The submit record is written after the call returns precisely so it can
+      // carry this; written before, it could only restate our own arguments.
+      expect(lastOf('revoke.submit')['executionId']).toBe('exec-77')
+      expect(lastOf('revoke.confirmed')).toMatchObject({
+        executionId: 'exec-77',
+        txHash: '0xhash',
+      })
+    })
+
+    it('records it on a reverted execution', async () => {
+      const kh = landsWith({
+        status: 'completed',
+        transactionHash: '0xreverted',
+        error: 'Error(ERC20: approve to the zero address)',
+        receipts: [{ hash: '0xreverted', blockNumber: 9, receiptStatus: '0x0', gasUsed: '21000' }],
+      })
+      vi.mocked(readAllowance).mockResolvedValue(500n)
+
+      const outcome = await revokeApproval({ kh, token: TOKEN, owner: OWNER, spender: SPENDER })
+
+      expect(outcome.disposition).toBe('reverted')
+      expect(lastOf('revoke.reverted')['executionId']).toBe('exec-77')
+    })
+
+    it('records it when the execution reports success and the allowance survives', async () => {
+      const kh = landsWith({ status: 'completed', transactionHash: '0xhash' })
+      vi.mocked(readAllowance).mockResolvedValue(500n)
+
+      await revokeApproval({ kh, token: TOKEN, owner: OWNER, spender: SPENDER })
+
+      expect(lastOf('revoke.failed')['executionId']).toBe('exec-77')
+    })
+
+    it('records it when the poll blows up after the execution was accepted', async () => {
+      // The distinction this buys an operator: "we submitted exec-77 and then
+      // lost contact with it" is a live transaction to go and look up, whereas a
+      // bare error is an incident with nothing to chase.
+      const kh = landsWith({ status: 'completed', transactionHash: '0xhash' })
+      vi.mocked(readAllowance).mockRejectedValue(new Error('rpc exploded'))
+
+      const outcome = await revokeApproval({ kh, token: TOKEN, owner: OWNER, spender: SPENDER })
+
+      expect(outcome.disposition).toBe('failed')
+      expect(outcome.executionId).toBe('exec-77')
+      expect(lastOf('revoke.failed')).toMatchObject({
+        executionId: 'exec-77',
+        error: 'rpc exploded',
+      })
+    })
+
+    it('claims no executionId when the submission never reached KeeperHub', async () => {
+      // An id we never received must not be invented, and the outcome must not
+      // carry an empty key that reads like one.
+      const kh = fakeKh({ checkAndExecute: vi.fn().mockRejectedValue(new Error('gateway timeout')) })
+
+      const outcome = await revokeApproval({ kh, token: TOKEN, owner: OWNER, spender: SPENDER })
+
+      expect(outcome).not.toHaveProperty('executionId')
+      expect(lastOf('revoke.failed')['executionId']).toBeUndefined()
+    })
+
+    it('claims no executionId when check-and-execute returns none', async () => {
+      const kh = fakeKh({
+        checkAndExecute: vi
+          .fn()
+          .mockResolvedValue({ executed: true, transactionHash: '0xinline', condition: CONDITION }),
+      })
+      vi.mocked(readAllowance).mockResolvedValue(0n)
+
+      const outcome = await revokeApproval({ kh, token: TOKEN, owner: OWNER, spender: SPENDER })
+
+      expect(outcome.transactionHash).toBe('0xinline')
+      expect(outcome).not.toHaveProperty('executionId')
+    })
+
+    it('names the execution that LANDED, not the one that was replaced', async () => {
+      // Each rung is a separate KeeperHub record. Publishing the original id
+      // after an escalation would point a reader at a submission that decided
+      // nothing, and it would disagree with the transaction we published.
+      vi.useFakeTimers()
+      try {
+        const checkAndExecute = vi
+          .fn()
+          .mockResolvedValueOnce({ executed: true, executionId: 'e1', condition: CONDITION })
+          .mockResolvedValueOnce({ executed: true, executionId: 'e2', condition: CONDITION })
+          .mockResolvedValue({ executed: true, executionId: 'e3', condition: CONDITION })
+        const getExecutionStatus = vi
+          .fn()
+          .mockResolvedValue({ executionId: 'x', status: 'pending' })
+        vi.mocked(readAllowance).mockResolvedValue(500n)
+
+        const promise = revokeApproval({
+          kh: fakeKh({ checkAndExecute, getExecutionStatus }),
+          token: TOKEN,
+          owner: OWNER,
+          spender: SPENDER,
+        })
+        await vi.advanceTimersByTimeAsync(120_000)
+        const outcome = await promise
+
+        expect(outcome.escalations).toBe(2)
+        expect(outcome.executionId).toBe('e3')
+        expect(lastOf('revoke.pending')['executionId']).toBe('e3')
+
+        // Three submissions, chained: each rung says which execution it was sent
+        // to overtake, so the three KeeperHub records are joinable to one revoke.
+        expect(
+          stagesOf('revoke.submit').map((e) => [e['executionId'], e['replaces']]),
+        ).toEqual([
+          ['e1', undefined],
+          ['e2', 'e1'],
+          ['e3', 'e2'],
+        ])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  })
+
+  describe('Permit2 lockdown()', () => {
+    beforeEach(() => {
+      vi.mocked(readPermit2Allowance).mockReset()
+    })
+
+    it('records the executionId on the submit and on the confirmation', async () => {
+      const kh = landsWith({ status: 'completed', transactionHash: '0xlock', sponsored: true })
+      vi.mocked(readPermit2Allowance).mockResolvedValue({
+        amount: 0n,
+        expiration: 1_900_000_000,
+        nonce: 4,
+      })
+
+      const outcome = await revokePermit2Allowances({ kh, owner: OWNER, pairs: [PAIR_A] })
+
+      expect(outcome.disposition).toBe('confirmed')
+      expect(outcome.executionId).toBe('exec-77')
+      expect(lastOf('revoke.submit')).toMatchObject({
+        executionId: 'exec-77',
+        action: 'permit2-lockdown',
+      })
+      expect(lastOf('revoke.confirmed')).toMatchObject({
+        executionId: 'exec-77',
+        txHash: '0xlock',
+      })
+    })
+
+    it('records it when the batch reports success and a slot survives', async () => {
+      const kh = landsWith({ status: 'completed', transactionHash: '0xlock' })
+      vi.mocked(readPermit2Allowance).mockResolvedValue({
+        amount: 500n,
+        expiration: 1_900_000_000,
+        nonce: 4,
+      })
+
+      await revokePermit2Allowances({ kh, owner: OWNER, pairs: [PAIR_A] })
+
+      expect(lastOf('revoke.failed')['executionId']).toBe('exec-77')
+    })
+
+    it('records it when the confirmation read blows up after acceptance', async () => {
+      const kh = landsWith({ status: 'completed', transactionHash: '0xlock' })
+      vi.mocked(readPermit2Allowance).mockRejectedValue(new Error('rpc exploded'))
+
+      const outcome = await revokePermit2Allowances({ kh, owner: OWNER, pairs: [PAIR_A] })
+
+      expect(outcome.executionId).toBe('exec-77')
+      expect(lastOf('revoke.failed')).toMatchObject({
+        executionId: 'exec-77',
+        action: 'permit2-lockdown',
+      })
+    })
+
+    it('claims no executionId when the lockdown never reached KeeperHub', async () => {
+      const kh = fakeKh({ checkAndExecute: vi.fn().mockRejectedValue(new Error('gateway timeout')) })
+
+      const outcome = await revokePermit2Allowances({ kh, owner: OWNER, pairs: [PAIR_A] })
+
+      expect(outcome).not.toHaveProperty('executionId')
+      expect(lastOf('revoke.failed')['executionId']).toBeUndefined()
+    })
+
+    it('claims no executionId when check-and-execute returns none', async () => {
+      const kh = fakeKh({
+        checkAndExecute: vi
+          .fn()
+          .mockResolvedValue({ executed: true, transactionHash: '0xinline', condition: CONDITION }),
+      })
+      vi.mocked(readPermit2Allowance).mockResolvedValue({
+        amount: 0n,
+        expiration: 1_900_000_000,
+        nonce: 4,
+      })
+
+      const outcome = await revokePermit2Allowances({ kh, owner: OWNER, pairs: [PAIR_A] })
+
+      expect(outcome.transactionHash).toBe('0xinline')
+      expect(outcome).not.toHaveProperty('executionId')
+    })
+
+    it('names the execution that LANDED, not the one that was replaced', async () => {
+      vi.useFakeTimers()
+      try {
+        const checkAndExecute = vi
+          .fn()
+          .mockResolvedValueOnce({ executed: true, executionId: 'e1', condition: CONDITION })
+          .mockResolvedValueOnce({ executed: true, executionId: 'e2', condition: CONDITION })
+          .mockResolvedValue({ executed: true, executionId: 'e3', condition: CONDITION })
+        const getExecutionStatus = vi
+          .fn()
+          .mockResolvedValue({ executionId: 'x', status: 'pending' })
+        vi.mocked(readPermit2Allowance).mockResolvedValue({
+          amount: 500n,
+          expiration: 1_900_000_000,
+          nonce: 4,
+        })
+
+        const promise = revokePermit2Allowances({
+          kh: fakeKh({ checkAndExecute, getExecutionStatus }),
+          owner: OWNER,
+          pairs: [PAIR_A],
+        })
+        await vi.advanceTimersByTimeAsync(120_000)
+        const outcome = await promise
+
+        expect(outcome.executionId).toBe('e3')
+        expect(lastOf('revoke.pending')['executionId']).toBe('e3')
+        expect(
+          stagesOf('revoke.submit').map((e) => [e['executionId'], e['replaces']]),
+        ).toEqual([
+          ['e1', undefined],
+          ['e2', 'e1'],
+          ['e3', 'e2'],
+        ])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  })
+})

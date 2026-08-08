@@ -24,10 +24,15 @@ nothing configured:
 
 ```bash
 pnpm install
-pnpm demo:verify     # http://localhost:3000/verify
+pnpm demo:verify     # http://localhost:3000/verify   (or: make demo-verify)
 ```
 
-That serves the **real** `/verify` dashboard, replaying **68 verbatim rows** of a
+If port 3000 is busy the server refuses to start rather than moving quietly —
+the URL above would otherwise be wrong, and the likeliest occupant is another
+Revoker, which would put two watchers on the same wallet. Move it with `PORT`:
+`PORT=3001 pnpm demo:verify`.
+
+That serves the **real** `/verify` dashboard, replaying **80 verbatim rows** of a
 recorded Sepolia run from `data/demo-run.jsonl` — every `threat.detected`,
 `revoke.submit` and `revoke.confirmed` in the order and cadence they happened,
 with clickable Etherscan links to transactions that really landed. The page
@@ -35,6 +40,7 @@ stamps itself `REPLAY` so it cannot be mistaken for a live run.
 
 ```bash
 pnpm demo            # one REAL scan of the public demo wallet, executes nothing
+                     # (or: make demo)
 ```
 
 `REVOKER_DEMO=1` substitutes a sentinel API key no organisation will accept,
@@ -167,12 +173,20 @@ and needs no auth — so it is free to disagree with the seed's own report.
 ```
 🚨 threat.detected   mUSDC  allowance=MAX_UINT256  atRisk=10000000000
                      rules=[unlimited-to-unverified, denylisted]
-↗  revoke.submit     method=check-and-execute
-✅ revoke.confirmed  0xc45a19a6…  allowanceAfter=0  sponsored=true
+↗  revoke.submit     method=check-and-execute  executionId=…
+✅ revoke.confirmed  0xc45a19a6…  executionId=…  allowanceAfter=0  sponsored=true
 ```
 
 No manual step happens between detection and revoke. Use `--dry-run` to watch it
 decide without executing.
+
+`executionId` is elided above because it is per-run — yours will differ. It is
+KeeperHub's own handle on the execution, and it is the field that makes
+"executed **via KeeperHub**" checkable instead of inferred: the explorer shows a
+relayer calling `approve`, while the execution record shows the *guarded*
+`check-and-execute` behind it. Both revoke paths write it into
+`audit/revoker.jsonl` on every stage — see
+[the executionId section in the README](./README.md#the-keeperhub-side-of-those-same-transactions--executionid).
 
 The allowance is now zero:
 
@@ -286,10 +300,10 @@ Revoker — arming the Permit2 threat scenario
 
 Two grants, because there are two layers:
 
-| Step | Transaction | What it does |
-|---|---|---|
-| upstream `approve(PERMIT2, MAX)` | [`0xa52cb025…5855a2`](https://sepolia.etherscan.io/tx/0xa52cb025170b45b58ba804ce6747aa0f9ae5ce87cdd66813688d8fd81c5855a2) | lets Permit2 move the token at all |
-| `Permit2.approve` | [`0xe978f12f…c73297`](https://sepolia.etherscan.io/tx/0xe978f12fb5fe7766b7659bb74569a9cfdb08ec3e4762c9eeaabb539a0c753297) | writes the downstream slot — this is the exposure |
+| Step | Block | Transaction | What it does |
+|---|---|---|---|
+| upstream `approve(PERMIT2, MAX)` | `11445297` | [`0xa52cb025…5855a2`](https://sepolia.etherscan.io/tx/0xa52cb025170b45b58ba804ce6747aa0f9ae5ce87cdd66813688d8fd81c5855a2) | lets Permit2 move the token at all |
+| `Permit2.approve` | `11445298` | [`0xe978f12f…c73297`](https://sepolia.etherscan.io/tx/0xe978f12fb5fe7766b7659bb74569a9cfdb08ec3e4762c9eeaabb539a0c753297) | writes the downstream slot — this is the exposure |
 
 Note that Permit2's "unlimited" is `type(uint160).max`, not `type(uint256).max`.
 
@@ -320,10 +334,24 @@ cast call 0x000000000022D473030F116dDEE9F6B43aC78BA3 \
 `amount` is `0`. The expiration is a dead field on an emptied slot.
 
 The **upstream** `approve(PERMIT2, MAX)` from 6b is deliberately *not* revoked.
-It trips the `upstream-permit2-approval` **hold**, which reports it and refuses
-to act unattended — `approve(PERMIT2, 0)` would break every DEX route for that
-token. It is offered to a human through the MCP `revoke_approval` tool, which
-requires `confirm: true`.
+It trips **both** holds — `upstream-permit2-approval`, because the spender is
+Permit2 itself, and `operator-allowlisted`, because Permit2 also ships in
+`data/allowlist.json`. Either alone would withhold the unattended signature; the
+duplication is deliberate, since the address that must never be autonomously
+revoked should not depend on exactly one of two reasons staying correct.
+`approve(PERMIT2, 0)` would break every DEX route for that token. The exposure is
+still detected, still assessed and still reported — a hold withholds the
+signature, not the finding — and it is offered to a human through the MCP
+`revoke_approval` tool, which requires `confirm: true`.
+
+Look for it in the trail as `revoke.skipped` with `rail: hold`. Two more rails
+share that stage and are told apart by the same field: `correlated-failure-brake`
+(≥4 newly-firing exposures that are also ≥50% of everything evaluated in one
+scan — nothing is signed, and the next scan decides) and `revoke-rate-ceiling`
+(the rolling 24h cap of 12 autonomous revokes, which refuses signatures without
+ever stopping the watch). Neither can trip on this two-exposure demo wallet,
+which is by design: the brake's absolute floor of 4 exists precisely so that one
+new drainer in a small wallet is never mistaken for a correlated failure.
 
 ---
 
@@ -359,6 +387,21 @@ to escalate a detection into the atomic write. It **fails closed**: `503` when
 `REVOKER_CALLBACK_SECRET` is unset, and a plain `404` in any dry-run or demo
 mode — absent rather than merely disabled.
 
+It also exposes `GET /healthz`, which is the only surface that can tell you the
+watcher is still watching. The page renders and the SSE stream opens just as
+happily when the loop has died, so:
+
+```bash
+curl -s http://localhost:3000/healthz | jq
+curl -f -s -o /dev/null http://localhost:3000/healthz && echo alive || echo STALE
+```
+
+It answers **503** — not a 200 carrying `ok: false`, because probes read the
+status line and never the body — unless this process constructed a watcher *and*
+a `watch.scan` has been written within **3× the poll interval**. A replay run
+therefore reports 503 by design: it watches nothing and executes nothing, and the
+recorded rows carry yesterday's timestamps rather than fresh ones.
+
 > The sentinel workflow (`workflows/revoker-sentinel.json`) is **authored and
 > pre-flight validated but NOT deployed.** Creating it returns
 > `402 upgrade_required` — its `HTTP Request` action needs a paid Pro plan.
@@ -386,19 +429,22 @@ result: `response` (detection → confirmed, the agent's own speed) and `exposur
 ## 10. Tests
 
 ```bash
-pnpm test               # 580 TypeScript tests
+pnpm test               # 720 TypeScript tests
 pnpm contracts:test     # 54 Solidity tests
 pnpm e2e                # 34 Playwright tests
+make submission-check   # placeholders, required links, tracked images
 ```
 
-**668 total.** 100% statements, branches, functions and lines on `src/` **and**
+**808 total.** 100% statements, branches, functions and lines on `src/` **and**
 `scripts/` — gated in `vitest.config.ts`, so CI fails on a regression — plus
-100% Solidity coverage and 6 fuzz suites.
+100% Solidity coverage and 6 fuzz suites. CI runs six jobs behind the gate:
+quality, security, contracts, E2E, perf and submission readiness.
 
 The negatives matter most: a verified, aged, non-deny-listed spender must raise
-**no** threat; a pending execution must **not** be reported as failed; demo mode
-must be unable to execute whatever flags are passed. An agent that cries wolf
-gets turned off.
+**no** threat; a failed source-verification lookup must make the rule **abstain**
+rather than fire; a pending execution must **not** be reported as failed; demo
+mode must be unable to execute whatever flags are passed. An agent that cries
+wolf gets turned off.
 
 ---
 

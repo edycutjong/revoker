@@ -786,16 +786,18 @@ describe('Watcher.scan — Permit2 exposures', () => {
     expect(failure?.['token']).toBeUndefined()
   })
 
-  it('touches no Permit2 slot once the ERC-20 half has hit the revoke cap', async () => {
-    // stop() lands mid-scan. The Permit2 half must honour it on entry, not
-    // discover it one lockdown later.
+  it('signs no Permit2 lockdown once the ERC-20 half has hit the revoke cap', async () => {
+    // stop() lands mid-scan, between the collect phase and the Permit2 write.
+    // Detection on both surfaces has already happened by then and is allowed to
+    // — reads change nothing — but the cap must be honoured before the lockdown
+    // is signed, not discovered one transaction later.
     permit2.fetchPermit2Pairs.mockResolvedValue([PAIR])
     const w = await makeWatcher({ maxRevokes: 1 })
 
     await w.scan()
 
     expect(revoke.revokeApproval).toHaveBeenCalledTimes(1)
-    expect(permit2.fetchPermit2Pairs).not.toHaveBeenCalled()
+    expect(revoke.revokePermit2Allowances).not.toHaveBeenCalled()
   })
 
   it('stops mid-batch when a Permit2 lockdown reaches the revoke cap', async () => {
@@ -1215,5 +1217,392 @@ describe('Watcher.run — surviving a bad day', () => {
     await w.run()
 
     expect(w.outcomes).toHaveLength(0)
+  })
+})
+
+/**
+ * ── The safety rails ─────────────────────────────────────────────────────────
+ *
+ * Everything above tests that the agent acts when it should. These test that it
+ * REFUSES when it should, which is the harder half: a sentinel that revokes too
+ * eagerly does not look broken, it looks busy. Two cold audits landed on the
+ * same hazard from opposite ends — the top reliability risk, and the reason
+ * nobody would run this on a wallet that matters.
+ */
+describe('Watcher — the operator allow-list', () => {
+  /** N distinct spenders, so a scan can hold more than one exposure. */
+  function spenders(n: number): Address[] {
+    return Array.from({ length: n }, (_, i): Address => `0x${String(i + 1).padStart(40, '0')}`)
+  }
+
+  function exposures(list: readonly Address[]): void {
+    chain.fetchApprovals.mockResolvedValue(list.map((spender) => ({ token: TOKEN, spender })))
+  }
+
+  it('loads data/allowlist.json by default, so an entrypoint cannot forget it', async () => {
+    // index.ts and server.ts construct the watcher without ever mentioning an
+    // allow-list. If the protection depended on them passing one, it would be
+    // absent from every production path and present only in tests.
+    const { Watcher } = await import('../src/watcher.js')
+    const w = new Watcher({ owner: OWNER, kh: makeKh() })
+
+    await w.scan()
+
+    const passed = (rules.assess.mock.calls[0]?.[0] as { allowlist: Set<string> }).allowlist
+    expect(passed.has(PERMIT2.toLowerCase())).toBe(true)
+  })
+
+  it('honours an explicitly empty allow-list instead of falling back to the file', async () => {
+    // `??`, not truthiness. "Bless nothing" is a valid operator decision, and
+    // silently re-adding the file's blessings would reinstate ones they removed.
+    const w = await makeWatcher({ allowlist: [] })
+
+    await w.scan()
+
+    expect((rules.assess.mock.calls[0]?.[0] as { allowlist: Set<string> }).allowlist.size).toBe(0)
+  })
+
+  it('lower-cases what it is given, so checksum casing cannot make it miss', async () => {
+    const w = await makeWatcher({ allowlist: ['0xAbCdEf0000000000000000000000000000000001'] })
+
+    await w.scan()
+
+    expect([
+      ...(rules.assess.mock.calls[0]?.[0] as { allowlist: Set<string> }).allowlist,
+    ]).toEqual(['0xabcdef0000000000000000000000000000000001'])
+  })
+
+  it('HOLDS an allow-listed spender rather than revoking it', async () => {
+    // The scenario the rail exists for: young-spender fires on any contract
+    // deployed in the last week, and integrating a brand-new venue at launch is
+    // exactly what a trading agent does. Without this the product is most
+    // dangerous to the wallets it targets.
+    rules.assess.mockResolvedValue({
+      threat: true,
+      fired: [{ rule: 'young-spender', reason: 'deployed ~0.4 days ago', evidence: {} }],
+      all: [{ rule: 'young-spender', fired: true }],
+      holds: [
+        {
+          rule: 'operator-allowlisted',
+          fired: true,
+          reason: 'spender is operator-allowlisted',
+          evidence: { autonomousRevoke: false },
+        },
+      ],
+    })
+    const w = await makeWatcher({ allowlist: [SPENDER] })
+
+    expect(await w.scan()).toHaveLength(0)
+    expect(revoke.revokeApproval).not.toHaveBeenCalled()
+
+    const entries = readEntries()
+    // Nothing is hidden. The threat is still detected and still on the record;
+    // only the unattended signature is withheld.
+    expect(entries.find((e) => e.stage === 'threat.detected')).toMatchObject({ spender: SPENDER })
+    const skipped = entries.find((e) => e.stage === 'revoke.skipped')
+    expect(skipped).toMatchObject({ rail: 'hold' })
+    expect(JSON.stringify(skipped?.['holds'])).toContain('operator-allowlisted')
+  })
+
+  it('reports a hold even when NO threat rule fired', async () => {
+    // The bug a DX audit found: holds were only reported on the path where a
+    // rule fires, so an allow-listed or upstream-Permit2 exposure that tripped
+    // nothing vanished from the trail entirely — the documented feature was
+    // silently absent from exactly the path the demo exercises.
+    rules.assess.mockResolvedValue({
+      threat: false,
+      fired: [],
+      all: [{ rule: 'denylisted', fired: false }],
+      holds: [
+        {
+          rule: 'operator-allowlisted',
+          fired: true,
+          reason: 'spender is operator-allowlisted',
+          evidence: { allowlistSize: 1 },
+        },
+      ],
+    })
+    const w = await makeWatcher({ allowlist: [SPENDER] })
+
+    await w.scan()
+
+    const entries = readEntries()
+    expect(entries.find((e) => e.stage === 'threat.cleared')).toBeDefined()
+    const skipped = entries.find((e) => e.stage === 'revoke.skipped')
+    expect(skipped).toMatchObject({ rail: 'hold', spender: SPENDER })
+    expect(JSON.stringify(skipped?.['holds'])).toContain('operator-allowlisted')
+  })
+
+  it('reports a hold on a quiet Permit2 slot too — both surfaces agree', async () => {
+    chain.fetchApprovals.mockResolvedValue([])
+    permit2.fetchPermit2Pairs.mockResolvedValue([{ token: TOKEN, spender: SPENDER }])
+    rules.assess.mockResolvedValue({
+      threat: false,
+      fired: [],
+      all: [{ rule: 'permit2-long-lived', fired: false }],
+      holds: [
+        { rule: 'operator-allowlisted', fired: true, reason: 'blessed', evidence: {} },
+      ],
+    })
+    const w = await makeWatcher({ allowlist: [SPENDER] })
+
+    await w.scan()
+
+    expect(
+      readEntries().find((e) => e.stage === 'revoke.skipped' && e['surface'] === 'permit2'),
+    ).toMatchObject({ rail: 'hold' })
+  })
+
+  it('says nothing extra when no hold fired', async () => {
+    const w = await makeWatcher()
+    await w.scan()
+    expect(readEntries().filter((e) => e['rail'] === 'hold')).toHaveLength(0)
+  })
+
+  describe('the rolling revoke-rate ceiling', () => {
+    it('stops the Nth revoke and keeps detecting', async () => {
+      // maxRevokes ends the process; this rail does not. It refuses signatures
+      // while detection, assessment and the audit trail carry on — the whole
+      // difference between a safety rail and an off switch.
+      //
+      // Three exposures, deliberately: four would trip the correlated-failure
+      // brake first and this test would be measuring the wrong rail.
+      exposures(spenders(3))
+      const w = await makeWatcher({ maxRevokesPerDay: 2 })
+
+      await w.scan()
+
+      expect(revoke.revokeApproval).toHaveBeenCalledTimes(2)
+      const entries = readEntries()
+      expect(entries.filter((e) => e.stage === 'threat.detected')).toHaveLength(3)
+      const refusal = entries.filter((e) => e['rail'] === 'revoke-rate-ceiling')
+      // Once per scan, not once per exposure: an operator needs telling that the
+      // ceiling is holding, not telling forty times in one second.
+      expect(refusal).toHaveLength(1)
+      expect(refusal[0]).toMatchObject({ ceiling: 2, windowHours: 24 })
+    })
+
+    it('is still exhausted on the next scan inside the window', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-08-08T00:00:00Z'))
+      exposures(spenders(3))
+      const w = await makeWatcher({ maxRevokesPerDay: 2 })
+
+      await w.scan()
+      expect(revoke.revokeApproval).toHaveBeenCalledTimes(2)
+
+      // Twelve hours later the third exposure is still live, still firing, and
+      // still refused: the budget is a property of the window, not of the scan.
+      vi.setSystemTime(new Date('2026-08-08T12:00:00Z'))
+      await w.scan()
+
+      expect(revoke.revokeApproval).toHaveBeenCalledTimes(2)
+      expect(
+        readEntries().filter((e) => e['rail'] === 'revoke-rate-ceiling'),
+      ).toHaveLength(2)
+    })
+
+    it('rolls forward: the budget returns once the 24h window has passed', async () => {
+      // Rolling rather than per-calendar-day, so the cap cannot be doubled by
+      // straddling midnight.
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-08-08T23:59:00Z'))
+      exposures(spenders(2))
+      const w = await makeWatcher({ maxRevokesPerDay: 1 })
+
+      await w.scan()
+      expect(revoke.revokeApproval).toHaveBeenCalledTimes(1)
+
+      // Two minutes later, past midnight. A calendar-day reset would have handed
+      // back the whole budget here; a rolling window does not.
+      vi.setSystemTime(new Date('2026-08-09T00:01:00Z'))
+      await w.scan()
+      expect(revoke.revokeApproval).toHaveBeenCalledTimes(1)
+
+      // A full 24h after the first revoke, the budget genuinely returns.
+      vi.setSystemTime(new Date('2026-08-10T00:00:00Z'))
+      await w.scan()
+      expect(revoke.revokeApproval).toHaveBeenCalledTimes(2)
+    })
+
+    it('trims a Permit2 batch to the remaining budget instead of walking through it', async () => {
+      // One lockdown is one transaction but N revokes. Metering it as one would
+      // let the batched surface stroll past a rail the ERC-20 surface obeys.
+      chain.fetchApprovals.mockResolvedValue([])
+      permit2.fetchPermit2Pairs.mockResolvedValue(
+        spenders(3).map((spender) => ({ token: TOKEN, spender })),
+      )
+      const w = await makeWatcher({ maxRevokesPerDay: 2 })
+
+      await w.scan()
+
+      const call = revoke.revokePermit2Allowances.mock.calls[0]?.[0] as { pairs: unknown[] }
+      expect(call.pairs).toHaveLength(2)
+      expect(
+        readEntries().find((e) => e['rail'] === 'revoke-rate-ceiling'),
+      ).toMatchObject({ surface: 'permit2', withheld: 1, admitted: 2 })
+    })
+
+    it('signs no lockdown at all when the budget is already spent', async () => {
+      permit2.fetchPermit2Pairs.mockResolvedValue([{ token: TOKEN, spender: SPENDER }])
+      chain.fetchApprovals.mockResolvedValue([{ token: TOKEN, spender: SPENDER }])
+      const w = await makeWatcher({ maxRevokesPerDay: 1 })
+
+      await w.scan()
+
+      // The single unit of budget went to the ERC-20 revoke; Permit2 gets none.
+      expect(revoke.revokeApproval).toHaveBeenCalledTimes(1)
+      expect(revoke.revokePermit2Allowances).not.toHaveBeenCalled()
+      expect(
+        readEntries().find(
+          (e) => e['rail'] === 'revoke-rate-ceiling' && e['surface'] === 'permit2',
+        ),
+      ).toMatchObject({ withheld: 1 })
+    })
+  })
+
+  describe('the correlated-failure brake', () => {
+    it('refuses to act when most of the wallet starts firing at once', async () => {
+      // Four independent spenders turning hostile between two five-second polls
+      // is a claim about the world. One shared detection input misbehaving is
+      // one thing going wrong. The second explanation is overwhelmingly likelier
+      // and the costs are asymmetric: waiting one poll costs seconds, acting on
+      // a false mass detection costs every approval the wallet depends on.
+      exposures(spenders(4))
+      const w = await makeWatcher()
+
+      expect(await w.scan()).toHaveLength(0)
+      expect(revoke.revokeApproval).not.toHaveBeenCalled()
+
+      const entries = readEntries()
+      // Detection is untouched. A brake that also silenced the agent would be
+      // indistinguishable from blindness in the one artifact that exists to be
+      // trusted after the fact.
+      expect(entries.filter((e) => e.stage === 'threat.detected')).toHaveLength(4)
+      expect(entries.find((e) => e['rail'] === 'correlated-failure-brake')).toMatchObject({
+        newlyFiring: 4,
+        evaluated: 4,
+        thresholdCount: 4,
+        thresholdFraction: 0.5,
+      })
+    })
+
+    it('acts on the very next scan, once the same exposures confirm', async () => {
+      // A one-scan delay, not a permanent refusal. A genuine mass compromise is
+      // still there five seconds later; an infrastructure blip is not.
+      exposures(spenders(4))
+      const w = await makeWatcher()
+
+      await w.scan()
+      expect(revoke.revokeApproval).not.toHaveBeenCalled()
+
+      await w.scan()
+      expect(revoke.revokeApproval).toHaveBeenCalledTimes(4)
+    })
+
+    it('does nothing on the next scan if the exposures stopped firing', async () => {
+      exposures(spenders(4))
+      const w = await makeWatcher()
+      await w.scan()
+
+      // The blip cleared: the rules no longer fire on any of them.
+      rules.assess.mockResolvedValue({
+        threat: false,
+        fired: [],
+        all: [{ rule: 'denylisted', fired: false }],
+        holds: [],
+      })
+      await w.scan()
+
+      expect(revoke.revokeApproval).not.toHaveBeenCalled()
+    })
+
+    it('does NOT engage below the absolute floor, whatever the fraction', async () => {
+      // One new drainer in a small wallet is 100% of it and is exactly the case
+      // this product exists for. A fraction alone would brake it.
+      exposures(spenders(3))
+      const w = await makeWatcher()
+
+      await w.scan()
+
+      expect(revoke.revokeApproval).toHaveBeenCalledTimes(3)
+      expect(readEntries().some((e) => e['rail'] === 'correlated-failure-brake')).toBe(false)
+    })
+
+    it('does NOT engage when the firing set is a small share of a busy wallet', async () => {
+      // Four bad spenders among sixteen is a wallet with four bad spenders, not
+      // a wallet whose detection inputs have fallen over.
+      const all = spenders(16)
+      exposures(all)
+      const firing = new Set(all.slice(0, 4).map((s) => s.toLowerCase()))
+      rules.assess.mockImplementation(({ spender }: { spender: Address }) =>
+        Promise.resolve(
+          firing.has(spender.toLowerCase())
+            ? {
+                threat: true,
+                fired: [{ rule: 'denylisted', reason: 'deny-listed', evidence: {} }],
+                all: [{ rule: 'denylisted', fired: true }],
+                holds: [],
+              }
+            : { threat: false, fired: [], all: [{ rule: 'denylisted', fired: false }], holds: [] },
+        ),
+      )
+      const w = await makeWatcher({ maxRevokesPerDay: 99 })
+
+      await w.scan()
+
+      expect(revoke.revokeApproval).toHaveBeenCalledTimes(4)
+      expect(readEntries().some((e) => e['rail'] === 'correlated-failure-brake')).toBe(false)
+    })
+
+    it('counts both surfaces together, so a fault cannot hide by splitting itself', async () => {
+      exposures(spenders(2))
+      permit2.fetchPermit2Pairs.mockResolvedValue(
+        spenders(2).map((spender) => ({ token: '0xfeed', spender })),
+      )
+      const w = await makeWatcher()
+
+      await w.scan()
+
+      // Two on each surface: under the floor per surface, over it across the
+      // scan. A per-surface brake would have let both halves through.
+      expect(revoke.revokeApproval).not.toHaveBeenCalled()
+      expect(revoke.revokePermit2Allowances).not.toHaveBeenCalled()
+      expect(readEntries().find((e) => e['rail'] === 'correlated-failure-brake')).toMatchObject({
+        newlyFiring: 4,
+        evaluated: 4,
+      })
+    })
+  })
+
+  it('stops signing the moment stop() lands, even mid-batch', async () => {
+    // An operator shutting the agent down (server.ts closes, SIGTERM) while a
+    // revoke is in flight. The remaining candidates must not be signed for: a
+    // process on its way out is the last one that should be starting new
+    // transactions.
+    exposures(spenders(3))
+    const w = await makeWatcher()
+    revoke.revokeApproval.mockImplementation(() => {
+      w.stop()
+      return Promise.resolve({ executed: true, allowanceAfter: 0n, txHash: '0xabc' })
+    })
+
+    await w.scan()
+
+    expect(revoke.revokeApproval).toHaveBeenCalledTimes(1)
+  })
+
+  it('a lockdown that throws does not lose the ERC-20 revokes already made', async () => {
+    chain.fetchApprovals.mockResolvedValue([{ token: TOKEN, spender: SPENDER }])
+    permit2.fetchPermit2Pairs.mockResolvedValue([{ token: '0xfeed' as Address, spender: SPENDER }])
+    revoke.revokePermit2Allowances.mockRejectedValue(new Error('lockdown reverted in flight'))
+    const w = await makeWatcher()
+
+    const performed = await w.scan()
+
+    expect(performed).toHaveLength(1)
+    expect(
+      readEntries().find((e) => e.stage === 'watch.error' && e['surface'] === 'permit2'),
+    ).toMatchObject({ error: 'lockdown reverted in flight' })
   })
 })

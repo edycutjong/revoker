@@ -30,6 +30,13 @@ interface CapturedWatcherOptions {
 }
 
 const httpMock = vi.hoisted(() => {
+  /**
+   * Handlers registered with server.on(), keyed by event. The EADDRINUSE tests
+   * fire 'error' through this rather than binding a real port twice: a test
+   * that actually contends for a socket is a test that fails on whichever CI
+   * runner happens to have something on it.
+   */
+  const handlers = new Map<string, (...args: unknown[]) => void>()
   const serverInstance = {
     listen: vi.fn((_port: number, cb?: () => void) => {
       cb?.()
@@ -37,6 +44,10 @@ const httpMock = vi.hoisted(() => {
     }),
     close: vi.fn((cb?: () => void) => {
       cb?.()
+      return serverInstance
+    }),
+    on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+      handlers.set(event, handler)
       return serverInstance
     }),
   }
@@ -49,10 +60,13 @@ const httpMock = vi.hoisted(() => {
     createServer,
     serverInstance,
     getListener: () => listener,
+    getHandler: (event: string) => handlers.get(event),
     reset: () => {
       listener = undefined
+      handlers.clear()
       serverInstance.listen.mockClear()
       serverInstance.close.mockClear()
+      serverInstance.on.mockClear()
       createServer.mockClear()
     },
   }
@@ -1709,6 +1723,79 @@ describe('server.ts — POST /revoke (the workflow callback)', () => {
       await expect(call(listener, { body: GOOD, res })).resolves.toBeDefined()
       expect(res.end).not.toHaveBeenCalled()
     })
+  })
+})
+
+describe('server.ts — a port it cannot bind', () => {
+  /** Loads the server, then fires the bind failure Node would have emitted. */
+  async function failToBind(code: string | undefined, message = 'listen failed') {
+    await loadServer()
+    const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    const handler = httpMock.getHandler('error')
+    expect(handler).toBeDefined()
+    handler?.(Object.assign(new Error(message), code === undefined ? {} : { code }))
+
+    return { exit, errors: errorSpy.mock.calls.map((c: unknown[]) => String(c[0])) }
+  }
+
+  it('registers the error handler BEFORE listen(), so a first-tick failure is caught', async () => {
+    await loadServer()
+
+    const onOrder = httpMock.serverInstance.on.mock.invocationCallOrder[0]
+    const listenOrder = httpMock.serverInstance.listen.mock.invocationCallOrder[0]
+    expect(httpMock.serverInstance.on).toHaveBeenCalledWith('error', expect.any(Function))
+    expect(onOrder).toBeLessThan(listenOrder ?? 0)
+  })
+
+  it('EADDRINUSE names the port, the likely cause, and the way out', async () => {
+    process.env['PORT'] = '3000'
+
+    const { exit, errors } = await failToBind('EADDRINUSE')
+    const text = errors.join('\n')
+
+    // Every element a judge needs to unstick themselves, asserted individually
+    // so a reworded message that drops one of them fails here rather than in
+    // front of the judge.
+    expect(text).toContain('3000')
+    expect(text).toContain('already in use')
+    expect(text).toContain('PORT=3001 pnpm demo:verify')
+    expect(exit).toHaveBeenCalledWith(1)
+  })
+
+  it('warns that a second watcher on the same wallet is the thing to avoid', async () => {
+    // The reason this refuses to auto-increment. Two Revokers on one wallet
+    // race to send the same approve(spender, 0); moving to :3001 would start
+    // the second one and say nothing.
+    const { errors } = await failToBind('EADDRINUSE')
+
+    expect(errors.join('\n')).toContain('Another Revoker may already be running')
+  })
+
+  it('reports any other bind failure with its own message, still exiting non-zero', async () => {
+    const { exit, errors } = await failToBind('EACCES', 'permission denied')
+    const text = errors.join('\n')
+
+    expect(text).toContain('cannot listen on port')
+    expect(text).toContain('permission denied')
+    expect(text).not.toContain('already in use')
+    expect(exit).toHaveBeenCalledWith(1)
+  })
+
+  it('handles an error carrying no code at all', async () => {
+    const { exit, errors } = await failToBind(undefined, 'something unlabelled')
+
+    expect(errors.join('\n')).toContain('something unlabelled')
+    expect(exit).toHaveBeenCalledWith(1)
+  })
+
+  it('does not fire on a healthy boot', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    await loadServer()
+
+    expect(errorSpy).not.toHaveBeenCalled()
   })
 })
 

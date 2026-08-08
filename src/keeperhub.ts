@@ -47,6 +47,17 @@ export interface ExecutionStatus extends ExecutionResult {
   pollAfterMs?: number
 }
 
+/**
+ * The answer to "can anyone read this contract's source?", including the answer
+ * "we could not find out".
+ *
+ * `'unknown'` is not a shade of `'unverified'`. It is the absence of an
+ * observation, and every consumer is required to treat it as such: no rule may
+ * fire on it, and no path may report the spender safe because of it. See
+ * KeeperHub.sourceVerification for the incident this type exists to prevent.
+ */
+export type SourceVerification = 'verified' | 'unverified' | 'unknown'
+
 export interface SimulationResult {
   success: boolean
   status: 'simulated'
@@ -333,14 +344,29 @@ export class KeeperHub {
    * source is not proof of malice, but it means nobody can read what the code
    * actually does — which is exactly the position a victim is in when they
    * grant an unlimited approval.
+   *
+   * THREE states, and the third one is the whole point. This used to return a
+   * boolean and answer `false` for both "the explorer says unverified" and "the
+   * lookup blew up". The comment on that catch claimed it was treating failure
+   * as unknown; the type could not express unknown, so the caller read it as
+   * unverified — and `fired: !verified` turned an ABI-endpoint outage into a
+   * rule that fires on EVERY unlimited approval in the wallet at once. An agent
+   * with a revoke key would then have autonomously torn out every router
+   * approval it depends on, at 3am, because a third-party HTTP endpoint was
+   * down. A rule must never fire because a lookup broke, and the only way to
+   * guarantee that at the type level is to make the caller handle the third
+   * state.
    */
-  async isSourceVerified(address: string, chainId: number = config.chainId): Promise<boolean> {
+  async sourceVerification(
+    address: string,
+    chainId: number = config.chainId,
+  ): Promise<SourceVerification> {
     try {
-      return (await this.getAbi(address, chainId)).success === true
+      return (await this.getAbi(address, chainId)).success === true ? 'verified' : 'unverified'
     } catch {
-      // Treat a lookup failure as "unknown", not "verified" — failing open here
-      // would silently disable the rule.
-      return false
+      // NOT 'unverified'. We asked and got no answer; saying "unverified" here
+      // would be reporting a fact about the contract that we do not have.
+      return 'unknown'
     }
   }
 
