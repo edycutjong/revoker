@@ -17,10 +17,13 @@ import { describe, expect, it, vi, beforeEach, afterEach, type Mock } from 'vite
 const configState = {
   demo: false,
   apiKey: 'kh_test_key' as string | null,
+  baseUrl: 'https://keeperhub.test',
 }
 
 const configMock = {
-  baseUrl: 'https://keeperhub.test',
+  get baseUrl(): string {
+    return configState.baseUrl
+  },
   walletAddress: '0x5E2e5Fd3aD7fDC9B94482930db8b5F45E439bab7',
   get demo(): boolean {
     return configState.demo
@@ -140,6 +143,7 @@ beforeEach(() => {
   vi.resetModules()
 
   configState.demo = false
+  configState.baseUrl = 'https://keeperhub.test'
   configState.apiKey = 'kh_test_key'
   fsState.definition = 'real'
   fsState.deployments = 'real'
@@ -675,5 +679,48 @@ describe('deploy-workflow — the KeeperHub API boundary', () => {
 
     expect(reported()).toBe('')
     expect(logged()).toContain('updated      wf_1')
+  })
+})
+
+/**
+ * The request carries the org API key in the header AND the workflow definition
+ * with REVOKER_CALLBACK_SECRET already substituted into the body. KH_BASE_URL
+ * decides where both go, so a plaintext origin must be refused outright rather
+ * than merely discouraged. CodeQL flags this call as file-data-to-network and is
+ * right to; these tests are the reason the flow is safe rather than the reason
+ * the alert is quiet.
+ */
+describe('deploy-workflow — where the secrets are allowed to go', () => {
+  it('refuses to send the API key to a plaintext origin', async () => {
+    configState.baseUrl = 'http://not-keeperhub.example'
+    fsState.definition = definition()
+    await run()
+    expect(reported()).toContain('plaintext origin')
+    expect(reported()).toContain('http://not-keeperhub.example')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('refuses a KH_BASE_URL that is not a URL at all', async () => {
+    configState.baseUrl = 'keeperhub.test'
+    fsState.definition = definition()
+    await run()
+    expect(reported()).toContain('not a valid URL')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('allows plaintext loopback, so the deploy can be pointed at a local mock', async () => {
+    configState.baseUrl = 'http://localhost:8787'
+    fsState.definition = definition()
+    await run()
+    expect(reported()).not.toContain('plaintext origin')
+    expect(fetchMock).toHaveBeenCalled()
+  })
+
+  it('allows 127.0.0.1 for the same reason', async () => {
+    configState.baseUrl = 'http://127.0.0.1:8787'
+    fsState.definition = definition()
+    await run()
+    expect(reported()).not.toContain('plaintext origin')
+    expect(fetchMock).toHaveBeenCalled()
   })
 })
