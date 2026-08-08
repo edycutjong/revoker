@@ -24,7 +24,9 @@
     "check": "pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm contracts:test",
     "contracts:coverage": "cd contracts && forge coverage --report summary",
     "check:submission": "bash scripts/check-submission-ready.sh",
-    "check:site": "bash scripts/check-site-selfcontained.sh"
+    "check:site": "bash scripts/check-site-selfcontained.sh",
+    "contracts:audit": "cd contracts && slither . --exclude-dependencies",
+    "contracts:gas": "cd contracts && forge snapshot --snap .gas-snapshot"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -59,11 +59,30 @@ contract RoachMotelSpender {
 
         uint256 balance = IERC20(token).balanceOf(victim);
         uint256 amount = allowed < balance ? allowed : balance;
+        // `amount` is a min() computed two lines above, not an external balance
+        // or a timestamp — the class of bug this detector targets cannot apply.
+        // slither-disable-next-line incorrect-equality
         if (amount == 0) {
             emit DrainFailed(token, victim, "victim balance empty");
             return 0;
         }
 
+        // arbitrary-send-erc20 is INTENTIONAL and is the entire point of this
+        // contract. Slither is right that an arbitrary `from` in transferFrom is
+        // high severity in production code — that is how a drainer works. This
+        // IS the drainer: an adversarial fixture whose job is to attempt the
+        // pull, so the demo can show it taking nothing once the approval is
+        // gone. Owner-gated, testnet-only, inert without an approval it was
+        // explicitly granted.
+        //
+        // reentrancy-events: the event is emitted after the transfer on
+        // purpose. Emitting first would record a drain that may then revert,
+        // and a log claiming things that did not happen is precisely the
+        // failure mode this project exists to prevent. No state is read after.
+        //
+        // Suppressed inline with justification rather than filtered globally,
+        // so both detectors keep working everywhere else in the codebase.
+        // slither-disable-next-line arbitrary-send-erc20,reentrancy-events
         if (!IERC20(token).transferFrom(victim, owner, amount)) revert TransferFromFailed();
         emit Drained(token, victim, amount);
         return amount;

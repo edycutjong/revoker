@@ -337,11 +337,11 @@ SEPOLIA_RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
 ### Run it
 
 ```bash
-pnpm spike              # prove the KeeperHub integration end-to-end
-pnpm seed               # stage the threat (idempotent — safe to re-run)
-pnpm watch -- --once    # watch Revoker detect it and take it away
-pnpm verify             # same, with the live dashboard at localhost:3000/verify
-pnpm bench              # p50/p95 over N=25 cycles
+pnpm spike            # prove the KeeperHub integration end-to-end
+pnpm seed             # stage the threat (idempotent — safe to re-run)
+pnpm watch -- --once  # watch Revoker detect it and take it away
+pnpm verify           # same, with the live dashboard at localhost:3000/verify
+pnpm bench            # p50/p95 over N=25 cycles
 ```
 
 `pnpm watch -- --dry-run` detects and reports without executing anything.
@@ -363,12 +363,12 @@ served from the same process that does the watching.
 ## 🧪 Testing & CI
 
 ```bash
-pnpm check              # everything CI runs
-pnpm test               # 44 unit tests
-pnpm contracts:test     # 42 Solidity tests, 100% coverage
-pnpm contracts:coverage # prove it
-pnpm lint               # eslint
-pnpm typecheck          # tsc --noEmit
+pnpm check               # everything CI runs
+pnpm test                # 44 unit tests
+pnpm contracts:test      # 42 Solidity tests, 100% coverage
+pnpm contracts:coverage  # prove it
+pnpm lint                # eslint
+pnpm typecheck           # tsc --noEmit
 ```
 
 `make help` lists every target.

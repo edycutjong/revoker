@@ -109,6 +109,26 @@ jobs:
         working-directory: contracts
         run: forge test -vvv
 
+      - name: Gas snapshot
+        working-directory: contracts
+        run: |
+          # Fails if any test's gas moves by more than the tolerance, so a
+          # change that quietly makes the revoke path more expensive gets
+          # noticed. The revoke is a race against a drainer; gas is not cosmetic.
+          forge snapshot --check .gas-snapshot --tolerance 1 || {
+            echo "::warning::gas changed beyond tolerance — run 'forge snapshot' and commit"
+            forge snapshot --snap /tmp/new.snap >/dev/null 2>&1
+            diff .gas-snapshot /tmp/new.snap || true
+            exit 1
+          }
+
+      - name: Slither static analysis
+        uses: crytic/slither-action@v0.4.0
+        with:
+          target: contracts
+          slither-args: --exclude-dependencies --fail-high
+          fail-on: high
+
       - name: Coverage must stay at 100%
         working-directory: contracts
         run: |
