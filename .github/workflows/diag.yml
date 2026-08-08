@@ -1,0 +1,74 @@
+name: Diag
+
+# TEMPORARY. Diagnoses why "Quality — lint · types · unit tests" hangs forever in
+# CI while the same suite finishes in ~1s locally. A hanging job never uploads its
+# logs, so every command here is wrapped in `timeout` and its exit code echoed:
+# whatever kills it, we still get the output back.
+#
+# Delete this file once the root cause is fixed.
+
+on:
+  push:
+    branches: [ci/diagnose-hang]
+  workflow_dispatch:
+
+jobs:
+  diag:
+    name: Why does vitest hang
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Versions
+        run: |
+          set +e
+          echo "node    $(node -v)"
+          echo "pnpm    $(pnpm -v)"
+          echo "vitest  $(node_modules/.bin/vitest --version)"
+          echo "cpus    $(nproc)"
+          echo "mem     $(free -m | awk '/Mem:/{print $2"MB"}')"
+
+      - name: A — tests, NO coverage
+        run: |
+          set +e
+          timeout -v -s KILL 120 node_modules/.bin/vitest run --reporter=basic --no-color
+          echo "::notice::A exit=$?"
+
+      - name: B — tests WITH coverage (the suspect)
+        run: |
+          set +e
+          timeout -v -s KILL 240 node_modules/.bin/vitest run --coverage --reporter=basic --no-color
+          echo "::notice::B exit=$?"
+
+      - name: C — coverage + hanging-process reporter
+        run: |
+          set +e
+          timeout -v -s KILL 240 node_modules/.bin/vitest run --coverage --reporter=hanging-process --no-color
+          echo "::notice::C exit=$?"
+
+      - name: D — what is still holding the event loop open
+        run: |
+          set +e
+          timeout -v -s KILL 180 node_modules/.bin/vitest run --coverage --no-file-parallelism --pool=forks --reporter=basic --no-color
+          echo "::notice::D exit=$?"
+
+      - name: E — leftover processes and listening sockets
+        if: always()
+        run: |
+          set +e
+          echo "--- node processes ---"
+          ps -eo pid,etimes,stat,cmd | grep -i [n]ode
+          echo "--- listening sockets ---"
+          ss -lntp 2>/dev/null || true
