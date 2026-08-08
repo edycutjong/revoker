@@ -407,7 +407,7 @@ served from the same process that does the watching.
 
 ```bash
 pnpm check               # everything CI runs
-pnpm test                # 44 unit tests
+pnpm test                # 157 unit tests
 pnpm contracts:test      # 42 Solidity tests, 100% coverage
 pnpm contracts:coverage  # prove it
 pnpm lint                # eslint
@@ -450,7 +450,7 @@ contracts/
 - [x] Three auditable threat rules
 - [x] Reproducible seed + p50/p95 benchmark
 - [x] Live SSE dashboard
-- [x] CI, security scanning, 86 tests (100% contract coverage)
+- [x] CI, security scanning, 233 tests (100% coverage on `src/` and contracts)
 - [ ] Indexer-backed token discovery, removing the watchlist limit
 - [ ] Mainnet with a policy layer — spending caps, daily revoke ceiling, allow-list escape hatch
 

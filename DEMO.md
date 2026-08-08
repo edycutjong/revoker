@@ -171,7 +171,7 @@ result: `response` (detection → confirmed, the agent's own speed) and `exposur
 
 ## 6. Tests — `pnpm test`
 
-86 tests — 44 TypeScript (`pnpm test`) and 42 Solidity at 100% coverage
+233 tests — 157 TypeScript (`pnpm test`, 100% coverage on `src/`), 42 Solidity at 100% coverage, and 34 Playwright E2E
 (`pnpm contracts:test`). The negatives matter most: a verified,
 aged, non-deny-listed spender must raise **no** threat — an agent that cries
 wolf gets turned off.
