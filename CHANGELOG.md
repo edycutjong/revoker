@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/edycutjong/revoker/compare/v1.1.0...v1.1.1) (2026-08-08)
+
+
+### Fixes
+
+* **security:** pin third-party actions to SHAs, stop echoing a bad API key ([#4](https://github.com/edycutjong/revoker/issues/4)) ([e8b98d5](https://github.com/edycutjong/revoker/commit/e8b98d5947e79ac9359e7dcee9f4aaaece792ab9))
+
 ## [1.1.0](https://github.com/edycutjong/revoker/compare/v1.0.0...v1.1.0) (2026-08-08)
 
 
