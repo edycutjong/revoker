@@ -79,7 +79,7 @@ does not.
 | Contracts | Solidity 0.8.28, Foundry | Dependency-free fixtures, so the demo reproduces with no package installs |
 | Runtime | TypeScript strict, Node 22 | `noUncheckedIndexedAccess`, `verbatimModuleSyntax` |
 | Dashboard | Node `http` + SSE, zero-dependency HTML | No CDN, no build step |
-| Tests | Vitest + Foundry | 44 unit + 11 Solidity, weighted toward the negatives |
+| Tests | Vitest + Foundry | 44 unit + 42 Solidity (100% contract coverage), weighted toward the negatives |
 
 ### Threat rules
 
@@ -224,8 +224,8 @@ Full per-cycle transaction links: [BENCHMARK.md](./BENCHMARK.md).
 | KeeperHub client | 14 | 4xx is **not** retried; `isSourceVerified` fails **closed** |
 | Revoke path | 7 | Reports failure when the API claims success but the allowance survives |
 | Audit trail | 8 | bigint serialisation; a broken subscriber cannot stop the loop |
-| Solidity | 11 | The drain **succeeds and takes zero** post-revoke; 256-run fuzz |
-| **Total** | **55** | |
+| Solidity | 42 | **100% coverage** — lines, statements, branches, functions. The drain **succeeds and takes zero** post-revoke; 4 fuzz suites |
+| **Total** | **86** | |
 
 CI runs three jobs behind a gate — quality (lint, types, coverage), security
 (`pnpm audit`, gitleaks over full history, a credential grep that fails the
@@ -326,7 +326,8 @@ served from the same process that does the watching.
 ```bash
 pnpm check              # everything CI runs
 pnpm test               # 44 unit tests
-pnpm contracts:test     # 11 Solidity tests, incl. a 256-run fuzz
+pnpm contracts:test     # 42 Solidity tests, 100% coverage
+pnpm contracts:coverage # prove it
 pnpm lint               # eslint
 pnpm typecheck          # tsc --noEmit
 ```

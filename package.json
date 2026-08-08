@@ -21,7 +21,8 @@
     "test:coverage": "vitest run --coverage",
     "contracts:build": "cd contracts && forge build",
     "contracts:test": "cd contracts && forge test -vv",
-    "check": "pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm contracts:test"
+    "check": "pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm contracts:test",
+    "contracts:coverage": "cd contracts && forge coverage --report summary"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

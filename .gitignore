@@ -11,3 +11,5 @@ contracts/cache/
 contracts/broadcast/
 audit/
 contracts/lib/
+contracts/coverage.txt
+contracts/lcov.info

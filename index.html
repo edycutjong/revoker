@@ -9,6 +9,9 @@
 <meta property="og:title" content="Revoker — the agent that lands the revoke before the drainer moves" />
 <meta property="og:description" content="Autonomous approval revocation through KeeperHub check-and-execute. A real drain, really stopped — 12.95s median detect→revoke, 25/25 cycles, every step a verifiable Sepolia transaction." />
 <meta property="og:url" content="https://edycutjong.github.io/revoker/" />
+<meta name="theme-color" content="#0a0c10" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)" />
+<meta name="color-scheme" content="dark light" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2l8 3v6c0 5-3.4 8.6-8 11-4.6-2.4-8-6-8-11V5l8-3z' fill='none' stroke='%234ea1ff' stroke-width='2' stroke-linejoin='round'/%3E%3Cellipse cx='12' cy='11.5' rx='3' ry='4.2' fill='none' stroke='%234ea1ff' stroke-width='2'/%3E%3C/svg%3E" />
 <style>
 /* ============================================================
@@ -29,6 +32,12 @@
   --shadow:0 14px 40px -18px rgba(0,0,0,.6);
   --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
   --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  /* prose measures — one target (~75-80 characters) expressed at each type size,
+     so every text column on the page lands on the same reading rhythm */
+  --prose:640px;      /* 1rem   text */
+  --prose-sm:600px;   /* .9-.95rem text */
+  --prose-xs:560px;   /* .85-.9rem text inside a padded panel */
+  --head-h:52px;      /* sticky header height → anchor scroll offset */
 }
 @media (prefers-color-scheme: light){
   :root{
@@ -55,12 +64,24 @@ body{
 }
 ::selection{background:var(--accent); color:var(--accent-ink)}
 a{color:var(--accent); text-decoration:none}
-a:hover{text-decoration:underline}
+a:hover{text-decoration:underline; text-underline-offset:3px; text-decoration-thickness:1px}
 :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:4px}
 code{font-family:var(--mono); font-size:.9em; background:var(--panel2); border:1px solid var(--line);
-  border-radius:5px; padding:.08em .38em; white-space:nowrap}
+  border-radius:5px; padding:.08em .38em; white-space:nowrap; font-variant-numeric:tabular-nums}
 h1,h2,h3{margin:0; font-weight:700; letter-spacing:-.02em; text-wrap:balance}
+sup{font-size:.68em; line-height:0; vertical-align:super}
 p{margin:0 0 1em}
+p:last-child{margin-bottom:0}
+/* every figure on this page is monospaced and column-aligned */
+.tx,.tresult,.addr-v,.bench-meta,.mini-stat,.op,.k-sub,.net-pill,.refline span,.rule-src
+  {font-variant-numeric:tabular-nums}
+/* scrollbars: the horizontal scrollers are load-bearing, so make them visible but quiet */
+*{scrollbar-width:thin; scrollbar-color:var(--line2) transparent}
+*::-webkit-scrollbar{width:10px; height:10px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:var(--line2); border:3px solid transparent;
+  background-clip:content-box; border-radius:99px}
+*::-webkit-scrollbar-thumb:hover{background:var(--muted); border:3px solid transparent; background-clip:content-box}
 .container{max-width:960px; margin:0 auto; padding:0 20px}
 .skip{position:absolute; left:-9999px; top:0; background:var(--accent); color:var(--accent-ink);
   padding:10px 16px; border-radius:0 0 8px 0; z-index:99; font-weight:600}
@@ -81,16 +102,25 @@ p{margin:0 0 1em}
 .net-pill{font-family:var(--mono); font-size:.68rem; color:var(--muted);
   border:1px solid var(--line); border-radius:999px; padding:2px 9px; letter-spacing:.04em}
 .site-nav{margin-left:auto; display:flex; gap:4px 16px; flex-wrap:wrap; font-size:.85rem}
-.site-nav a{color:var(--muted); padding:4px 2px}
+.site-nav a{position:relative; color:var(--muted); padding:4px 2px;
+  transition:color .16s ease}
 .site-nav a:hover{color:var(--text); text-decoration:none}
+/* current-section indicator: a hairline that grows from the centre */
+.site-nav a[href^="#"]::before{content:""; position:absolute; left:50%; right:50%; bottom:0; height:1.5px;
+  background:var(--accent); border-radius:2px; transition:left .16s ease, right .16s ease}
+.site-nav a[href^="#"]:hover::before{left:2px; right:2px}
+.site-nav a[aria-current]{color:var(--text)}
+.site-nav a[aria-current]::before{left:2px; right:2px}
 .site-nav a.ext::after{content:"\2197"; font-size:.75em; margin-left:3px; opacity:.7}
 
 /* ---------- hero ---------- */
-.hero{padding:76px 0 56px; text-align:center}
+.hero{padding:76px 0 56px; text-align:center; border-top:none}
 .eyebrow{font-size:.78rem; font-weight:600; text-transform:uppercase; letter-spacing:.11em; color:var(--accent); margin:0 0 18px}
 .hero h1{font-size:clamp(2rem, 6vw, 3.3rem); line-height:1.12; max-width:820px; margin:0 auto}
-.hero .sub{color:var(--muted); font-size:clamp(1rem, 2.4vw, 1.15rem); max-width:680px; margin:22px auto 0}
+.hero .sub{color:var(--muted); font-size:clamp(1rem, 2.4vw, 1.13rem); max-width:660px; margin:22px auto 0;
+  text-wrap:pretty}
 .hero .sub b{color:var(--text); font-weight:600}
+.hero .sub .turn{color:var(--text); font-weight:600}
 .cta-row{display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:30px}
 .btn{display:inline-flex; align-items:center; gap:8px; border-radius:9px; padding:11px 20px;
   font-weight:600; font-size:.95rem; border:1px solid transparent;
@@ -101,7 +131,12 @@ p{margin:0 0 1em}
 .btn-primary:hover{box-shadow:0 12px 30px -10px var(--accent)}
 .btn-ghost{background:var(--panel); color:var(--text); border-color:var(--line)}
 .btn-ghost:hover{border-color:var(--line2)}
-.hero-note{font-size:.82rem; color:var(--muted); margin-top:18px}
+/* the page's central promise — set as a badge, not a footnote */
+.hero-note{display:inline-flex; align-items:center; gap:9px; margin:26px 0 0;
+  font-size:.85rem; color:var(--muted); background:var(--panel);
+  border:1px solid var(--line); border-radius:999px; padding:7px 18px 7px 14px; text-align:left}
+.hero-note svg{flex:0 0 auto; color:var(--accent)}
+.hero-note b{color:var(--text); font-weight:600}
 
 /* stat band */
 .statband{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; max-width:760px; margin:44px auto 0}
@@ -113,39 +148,48 @@ p{margin:0 0 1em}
 .stat-l{display:block; color:var(--muted); font-size:.8rem; margin-top:6px; line-height:1.45}
 
 /* ---------- sections ---------- */
-section{padding:72px 0; border-top:1px solid var(--line); scroll-margin-top:64px}
-.sec-head{max-width:640px; margin-bottom:38px}
+section{padding:72px 0; border-top:1px solid var(--line); scroll-margin-top:calc(var(--head-h) + 12px)}
+.sec-head{max-width:var(--prose); margin-bottom:38px}
+.sec-head .eyebrow{margin-bottom:11px}
 .sec-head h2{font-size:clamp(1.45rem, 3.4vw, 1.9rem)}
-.sec-head .lede{color:var(--muted); margin:12px 0 0}
+.sec-head .lede{color:var(--muted); margin:12px 0 0; text-wrap:pretty}
 .center .sec-head{margin-left:auto; margin-right:auto; text-align:center}
 
 /* ---------- proof timeline ---------- */
 .timeline{list-style:none; margin:0; padding:0; position:relative}
+/* the spine carries the sequence: threat → response → verdict */
 .timeline::before{content:""; position:absolute; left:17px; top:10px; bottom:10px; width:2px;
-  background:var(--line)}
+  background:linear-gradient(180deg, var(--danger-line) 0%, var(--warn-line) 48%, var(--ok-line) 88%)}
 .tstep{position:relative; padding:0 0 22px 56px}
 .tstep:last-child{padding-bottom:0}
 .tnum{position:absolute; left:0; top:2px; width:36px; height:36px; border-radius:50%;
   background:var(--panel); border:2px solid var(--line2); color:var(--muted);
   display:flex; align-items:center; justify-content:center;
-  font-family:var(--mono); font-weight:700; font-size:.95rem}
+  font-family:var(--mono); font-weight:700; font-size:.95rem; font-variant-numeric:tabular-nums}
 .tstep.is-danger .tnum{border-color:var(--danger-line); color:var(--danger)}
-.tstep.is-ok .tnum{border-color:var(--ok-line); color:var(--ok)}
+.tstep.is-warn .tnum{border-color:var(--warn-line); color:var(--warn)}
+.tstep.is-ok .tnum{border-color:var(--ok); color:var(--ok); box-shadow:0 0 0 4px var(--ok-dim)}
 .tcard{background:var(--panel); border:1px solid var(--line); border-left-width:3px;
   border-radius:10px; padding:18px 20px; box-shadow:var(--shadow)}
 .tstep.is-danger .tcard{border-left-color:var(--danger)}
 .tstep.is-warn .tcard{border-left-color:var(--warn)}
-.tstep.is-ok .tcard{border-left-color:var(--ok)}
+/* step 3 is the payoff — it earns the extra weight */
+.tstep.is-ok .tcard{border-left-color:var(--ok); border-color:var(--ok-line); border-left-width:3px;
+  background:linear-gradient(180deg, var(--ok-dim), transparent 55%), var(--panel); padding:22px 24px}
+.tstep.is-ok .tcard h3{font-size:1.2rem}
 .ttag{display:inline-block; font-family:var(--mono); font-size:.68rem; font-weight:700;
   text-transform:uppercase; letter-spacing:.08em; border-radius:4px; padding:2px 8px; margin-bottom:8px}
 .ttag.danger{color:var(--danger); background:var(--danger-dim); border:1px solid var(--danger-line)}
 .ttag.warn{color:var(--warn); background:var(--warn-dim); border:1px solid var(--warn-line)}
 .ttag.ok{color:var(--ok); background:var(--ok-dim); border:1px solid var(--ok-line)}
 .tcard h3{font-size:1.06rem; margin-bottom:6px}
-.tcard p{color:var(--muted); font-size:.93rem; margin-bottom:12px}
+.tcard p{color:var(--muted); font-size:.93rem; margin-bottom:12px; max-width:var(--prose-sm);
+  text-wrap:pretty}
+.tcard p b{color:var(--text); font-weight:600}
 .tmeta{display:flex; gap:8px 20px; flex-wrap:wrap; align-items:baseline;
   border-top:1px dashed var(--line); padding-top:12px}
-.tx{font-family:var(--mono); font-size:.82rem; word-break:break-all}
+.tx{font-family:var(--mono); font-size:.82rem; word-break:break-all;
+  transition:color .16s ease}
 .tx::after{content:"\2197"; font-size:.8em; margin-left:4px; opacity:.75}
 .tresult{font-family:var(--mono); font-size:.82rem; color:var(--muted)}
 .tresult b{color:var(--text); font-weight:600}
@@ -155,15 +199,16 @@ section{padding:72px 0; border-top:1px solid var(--line); scroll-margin-top:64px
 .kicker{background:linear-gradient(180deg,var(--panel2),var(--panel));
   border:1px solid var(--ok-line); border-radius:14px; padding:34px 28px; margin-top:30px;
   text-align:center; box-shadow:var(--shadow)}
-.kicker .k-line{font-size:1.05rem; color:var(--muted); max-width:560px; margin:0 auto}
+.kicker .k-line{font-size:1.05rem; color:var(--muted); max-width:540px; margin:0 auto; text-wrap:pretty}
 .kicker .k-line b{color:var(--text); font-weight:600}
 .k-big{font-family:var(--mono); font-weight:700; letter-spacing:-.03em;
-  font-size:clamp(2.6rem, 9vw, 4.6rem); color:var(--ok); margin:14px 0 6px; line-height:1;
+  font-size:clamp(2.6rem, 9vw, 4.6rem); color:var(--ok); margin:18px 0 8px; line-height:1;
   font-variant-numeric:tabular-nums}
 .k-sub{font-family:var(--mono); font-size:.9rem; color:var(--muted)}
 .k-sub b{color:var(--text); font-weight:600}
-.relay-note{margin-top:26px; font-size:.85rem; color:var(--muted); background:var(--panel);
-  border:1px solid var(--line); border-radius:10px; padding:14px 18px}
+.relay-note{margin-top:26px; max-width:calc(var(--prose-xs) + 40px); font-size:.9rem; color:var(--muted); background:var(--panel);
+  border:1px solid var(--line); border-radius:10px; padding:16px 20px; text-wrap:pretty}
+.relay-note b{color:var(--text); font-weight:600}
 .relay-note code{white-space:normal; word-break:break-all}
 
 /* ---------- verify / code block ---------- */
@@ -171,52 +216,77 @@ section{padding:72px 0; border-top:1px solid var(--line); scroll-margin-top:64px
   border-radius:12px; margin:0 0 14px}
 .codeblock pre{margin:0; padding:20px 22px; overflow-x:auto; font-family:var(--mono);
   font-size:.85rem; line-height:1.7; color:var(--text)}
+.codeblock pre code{all:unset; font-family:var(--mono)}
 .codeblock .cmt{color:var(--muted)}
 .codeblock .str{color:var(--ok)}
-.copy-btn{position:absolute; top:10px; right:10px; background:var(--panel2); color:var(--muted);
+.codeblock::after{content:""; position:absolute; top:1px; right:1px; bottom:1px; width:44px; pointer-events:none;
+  opacity:0; transition:opacity .16s ease; border-radius:0 12px 12px 0;
+  background:linear-gradient(90deg, transparent, var(--panel))}
+.codeblock.has-more::after{opacity:1}
+.copy-btn{z-index:2; position:absolute; top:10px; right:10px; background:var(--panel2); color:var(--muted);
   border:1px solid var(--line); border-radius:7px; padding:6px 12px; font:600 .78rem var(--sans);
   cursor:pointer; transition:color .16s ease, border-color .16s ease}
-.copy-btn:hover{color:var(--text); border-color:var(--line2)}
-.copy-btn.copied{color:var(--ok); border-color:var(--ok-line)}
-.expected{font-size:.9rem; color:var(--muted)}
+.copy-btn:hover{color:var(--text); border-color:var(--line2); background:var(--panel)}
+.copy-btn:active{transform:translateY(1px)}
+.copy-btn.copied{color:var(--ok); border-color:var(--ok-line); background:var(--ok-dim)}
+.expected{font-size:.9rem; color:var(--muted); max-width:var(--prose-sm)}
 .expected code{color:var(--ok); font-weight:700}
 
-.addr-table{margin-top:30px}
+.addr-table{margin-top:30px; border-top:1px solid var(--line)}
 .addr-row{display:flex; gap:6px 18px; flex-wrap:wrap; align-items:baseline;
-  border-top:1px solid var(--line); padding:12px 2px}
-.addr-row:last-child{border-bottom:1px solid var(--line)}
+  border-bottom:1px solid var(--line); padding:12px 8px; margin:0 -8px;
+  border-radius:6px; transition:background .16s ease}
+.addr-row:hover{background:var(--panel)}
 .addr-k{flex:0 0 180px; font-size:.88rem; color:var(--muted)}
 .addr-v{font-family:var(--mono); font-size:.82rem; word-break:break-all}
+.addr-v::after{content:"\2197"; font-size:.8em; margin-left:4px; opacity:.75}
 
 /* ---------- race diagram ---------- */
-.race{display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:8px}
-.race-col{border:1px solid var(--line); border-radius:14px; padding:22px; background:var(--panel)}
+.race{display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:8px; align-items:stretch}
+.race-col{display:flex; flex-direction:column; border:1px solid var(--line); border-radius:14px;
+  padding:22px; background:var(--panel)}
 .race-col.bad{border-color:var(--danger-line)}
 .race-col.good{border-color:var(--ok-line)}
 .race-col h3{font-size:1rem; font-family:var(--mono); letter-spacing:0; margin-bottom:4px}
 .race-col .who{display:block; font-family:var(--sans); font-size:.8rem; font-weight:400; color:var(--muted); margin-bottom:18px}
-.op{background:var(--panel2); border:1px solid var(--line); border-radius:8px;
+/* .race-body absorbs the height difference so both verdicts sit on the same baseline */
+.race-body{flex:1 1 auto; display:flex; flex-direction:column; justify-content:center}
+/* the mobile-only separator that keeps the comparison readable once stacked */
+.race-vs{display:none}
+.op{display:flex; align-items:baseline; gap:10px;
+  background:var(--panel2); border:1px solid var(--line); border-radius:8px;
   padding:10px 14px; font-family:var(--mono); font-size:.82rem}
 .op + .op{margin-top:10px}
+/* the matching index is what makes the two columns comparable at a glance */
+.op-n{flex:0 0 auto; width:17px; height:17px; border-radius:4px; border:1px solid var(--line2);
+  color:var(--muted); font-size:.62rem; font-weight:700; line-height:15px; text-align:center;
+  align-self:center; font-variant-numeric:tabular-nums}
+.op-out{color:var(--muted); margin-left:auto; padding-left:8px}
 .race-gap{border:1.5px dashed var(--danger-line); background:var(--danger-dim); border-radius:8px;
   padding:12px 14px; margin:12px 0; font-size:.83rem; color:var(--muted)}
-.race-gap .gap-label{display:block; font-family:var(--mono); font-size:.7rem; font-weight:700;
-  text-transform:uppercase; letter-spacing:.08em; color:var(--danger); margin-bottom:4px}
+.race-gap .gap-label{display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:.7rem; font-weight:700;
+  text-transform:uppercase; letter-spacing:.08em; color:var(--danger); margin-bottom:5px}
+.race-gap .gap-label::after{content:""; flex:1 1 auto; height:1px; background:var(--danger-line)}
 .atomic-box{border:1.5px solid var(--ok-line); background:var(--ok-dim); border-radius:10px; padding:14px}
 .atomic-box .op{background:var(--panel)}
 .atomic-arrow{text-align:center; color:var(--ok); font-family:var(--mono); font-size:.8rem; padding:4px 0}
 .atomic-tag{display:block; text-align:center; font-family:var(--mono); font-size:.7rem; font-weight:700;
   text-transform:uppercase; letter-spacing:.08em; color:var(--ok); margin-top:10px}
-.verdict{margin-top:16px; font-size:.88rem; padding-top:14px; border-top:1px dashed var(--line)}
+/* min-height = padding + two lines, so both dashed rules land on the same baseline
+   even though one verdict is a line shorter than the other */
+.verdict{margin-top:18px; font-size:.88rem; padding-top:14px; min-height:4.3em;
+  border-top:1px dashed var(--line)}
 .verdict.bad{color:var(--muted)}
 .verdict.good{color:var(--text)}
-.observed{margin-top:22px; font-size:.85rem; color:var(--muted)}
-.observed pre{margin:8px 0 0; padding:12px 16px; background:var(--panel); border:1px solid var(--line);
+.observed{margin-top:26px; font-size:.88rem; color:var(--muted)}
+.observed p{max-width:var(--prose-sm); margin:0; text-wrap:pretty}
+.observed pre{margin:10px 0 0; padding:12px 16px; background:var(--panel); border:1px solid var(--line);
   border-radius:9px; overflow-x:auto; font-family:var(--mono); font-size:.78rem; color:var(--text)}
-.custody{margin-top:22px; display:flex; gap:14px; align-items:flex-start;
+.observed .obs-eq{display:block; margin-top:8px; font-family:var(--mono); font-size:.76rem; color:var(--muted)}
+.custody{margin-top:22px; max-width:calc(var(--prose-xs) + 80px); display:flex; gap:14px; align-items:flex-start;
   background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px 20px}
 .custody svg{flex:0 0 auto; color:var(--accent); margin-top:2px}
-.custody p{margin:0; font-size:.92rem; color:var(--muted)}
+.custody p{margin:0; font-size:.92rem; color:var(--muted); text-wrap:pretty}
 .custody b{color:var(--text)}
 
 /* ---------- rule cards ---------- */
@@ -229,11 +299,19 @@ section{padding:72px 0; border-top:1px solid var(--line); scroll-margin-top:64px
 .rule-src{font-family:var(--mono); font-size:.72rem; color:var(--muted);
   border-top:1px dashed var(--line); padding-top:10px}
 .rule-src b{color:var(--text); font-weight:600}
-.rules-note{margin-top:26px; font-size:.92rem; color:var(--muted); max-width:720px}
+.rules-note{margin-top:26px; font-size:.92rem; color:var(--muted); max-width:var(--prose-sm); text-wrap:pretty}
 .rules-note b{color:var(--text)}
 
 /* ---------- benchmark ---------- */
-.tablewrap{overflow-x:auto; border:1px solid var(--line); border-radius:12px; background:var(--panel)}
+.tablewrap{position:relative; overflow:hidden; border:1px solid var(--line); border-radius:12px; background:var(--panel)}
+.tablescroll{overflow-x:auto}
+.kh-table{margin-top:26px}
+.vh{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap}
+/* edge fade appears only while there is more table to the right */
+.tablewrap::after{content:""; position:absolute; top:0; right:0; bottom:0; width:44px; pointer-events:none;
+  opacity:0; transition:opacity .16s ease;
+  background:linear-gradient(90deg, transparent, var(--panel))}
+.tablewrap.has-more::after{opacity:1}
 table{border-collapse:collapse; width:100%; font-size:.88rem; min-width:520px}
 th,td{text-align:left; padding:11px 16px; border-bottom:1px solid var(--line)}
 tbody tr:last-child td{border-bottom:none}
@@ -248,17 +326,19 @@ td.hot{color:var(--text); font-weight:700}
 .chart-frame{position:relative; height:150px; border:1px solid var(--line); border-radius:12px;
   background:var(--panel); padding:14px 14px 10px; overflow:hidden}
 .bars{display:flex; align-items:flex-end; gap:4px; height:100%}
-.bars a{flex:1 1 0; min-width:4px; background:var(--accent); opacity:.75; border-radius:3px 3px 0 0;
-  transition:opacity .16s ease}
-.bars a:hover{opacity:1}
+.bars a{flex:1 1 0; min-width:4px; background:var(--accent); opacity:.7; border-radius:3px 3px 0 0;
+  transition:opacity .16s ease, filter .16s ease}
+.bars a:hover{opacity:1; filter:brightness(1.15)}
+.bars a:focus-visible{opacity:1; outline-offset:3px}
 .bars a.slow{background:var(--warn)}
 .refline{position:absolute; left:0; right:0; border-top:1.5px dashed var(--line2); pointer-events:none}
 .refline span{position:absolute; right:8px; top:-19px; font-family:var(--mono); font-size:.68rem; color:var(--muted);
   background:var(--panel); padding:0 5px}
-.chart figcaption{font-size:.8rem; color:var(--muted); margin-top:10px}
-.honesty{margin-top:30px; border-left:3px solid var(--warn); background:var(--warn-dim);
-  border-radius:0 10px 10px 0; padding:16px 20px; font-size:.9rem; color:var(--muted)}
+.chart figcaption{font-size:.8rem; color:var(--muted); margin-top:10px; max-width:var(--prose-sm)}
+.honesty{margin-top:30px; max-width:calc(var(--prose-xs) + 40px); border-left:3px solid var(--warn); background:var(--warn-dim);
+  border-radius:0 10px 10px 0; padding:16px 20px; font-size:.9rem; color:var(--muted); text-wrap:pretty}
 .honesty b{color:var(--text)}
+.honesty p{margin-bottom:.9em}
 .honesty p:last-child{margin-bottom:0}
 
 /* ---------- keeperhub ---------- */
@@ -266,17 +346,18 @@ td.hot{color:var(--text); font-weight:700}
 .mini-stat{font-family:var(--mono); font-size:.8rem; color:var(--muted);
   border:1px solid var(--line); background:var(--panel); border-radius:999px; padding:5px 14px}
 .mini-stat b{color:var(--accent); font-weight:700}
-.kh-lede{max-width:720px; color:var(--muted); font-size:.95rem}
+.kh-lede{max-width:var(--prose-sm); color:var(--muted); font-size:.95rem; text-wrap:pretty}
 .kh-lede b{color:var(--text)}
 
 /* ---------- limits ---------- */
-.limits{list-style:none; margin:0; padding:0; counter-reset:lim}
-.limits li{counter-increment:lim; position:relative; padding:18px 2px 18px 52px; border-top:1px solid var(--line)}
+.limits{list-style:none; margin:0; padding:0; max-width:calc(var(--prose-sm) + 56px); counter-reset:lim}
+.limits li{counter-increment:lim; position:relative; padding:20px 2px 20px 52px; border-top:1px solid var(--line)}
 .limits li:last-child{border-bottom:1px solid var(--line)}
-.limits li::before{content:counter(lim,decimal-leading-zero); position:absolute; left:2px; top:20px;
-  font-family:var(--mono); font-size:.8rem; font-weight:700; color:var(--warn)}
-.limits h3{font-size:.98rem; margin-bottom:4px}
-.limits p{font-size:.9rem; color:var(--muted); margin:0}
+.limits li::before{content:counter(lim,decimal-leading-zero); position:absolute; left:2px; top:22px;
+  font-family:var(--mono); font-size:.8rem; font-weight:700; color:var(--warn);
+  font-variant-numeric:tabular-nums; letter-spacing:.02em}
+.limits h3{font-size:.98rem; margin-bottom:5px; max-width:var(--prose-sm)}
+.limits p{font-size:.9rem; color:var(--muted); margin:0; max-width:var(--prose-sm); text-wrap:pretty}
 
 /* ---------- demo placeholder ---------- */
 .video-placeholder{aspect-ratio:16/9; border:1.5px dashed var(--line2); border-radius:14px;
@@ -292,9 +373,9 @@ td.hot{color:var(--text); font-weight:700}
 .foot-brand{display:flex; align-items:center; gap:9px; color:var(--text); font-weight:700}
 .foot-brand svg{color:var(--accent)}
 .foot-links{display:flex; gap:6px 22px; flex-wrap:wrap}
-.foot-links a{color:var(--muted)}
+.foot-links a{color:var(--muted); transition:color .16s ease}
 .foot-links a:hover{color:var(--text)}
-.foot-line{margin-top:26px; font-size:.8rem}
+.foot-line{margin-top:26px; font-size:.8rem; max-width:var(--prose-sm)}
 
 /* ---------- reveal animation (JS-gated; no-JS and reduced-motion see everything) ---------- */
 .js-anim .reveal{opacity:0; transform:translateY(14px);
@@ -303,13 +384,28 @@ td.hot{color:var(--text); font-weight:700}
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation:none !important; transition:none !important}
   .js-anim .reveal{opacity:1; transform:none}
-  .btn:hover,.rule-card:hover{transform:none}
+  .btn:hover,.rule-card:hover,.copy-btn:active{transform:none}
 }
 
 /* ---------- responsive ---------- */
 @media (max-width:820px){
   .rules-grid{grid-template-columns:1fr}
-  .race{grid-template-columns:1fr}
+  .race{grid-template-columns:1fr; gap:0}
+  .race-vs{display:flex; align-items:center; gap:12px; padding:16px 4px;
+    font-family:var(--mono); font-size:.7rem; font-weight:700; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--muted)}
+  .race-vs::before,.race-vs::after{content:""; flex:1 1 auto; height:1px; background:var(--line)}
+}
+@media (max-width:720px){
+  :root{--head-h:88px}
+  /* the nav becomes a single scrollable row rather than wrapping the header to 3 lines */
+  .site-head .container{gap:10px 12px}
+  .site-nav{order:3; width:100%; margin-left:0; flex-wrap:nowrap; overflow-x:auto;
+    gap:0 18px; padding-bottom:3px; scrollbar-width:none}
+  .site-nav::-webkit-scrollbar{display:none}
+  .site-nav a{white-space:nowrap}
+  .site-nav.has-more{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 32px),transparent);
+    mask-image:linear-gradient(90deg,#000 calc(100% - 32px),transparent)}
 }
 @media (max-width:640px){
   .hero{padding:52px 0 44px}
@@ -317,14 +413,37 @@ td.hot{color:var(--text); font-weight:700}
   .statband{grid-template-columns:1fr; gap:10px; max-width:420px}
   .stat{display:flex; align-items:baseline; justify-content:space-between; text-align:left; padding:14px 18px}
   .stat-l{margin-top:0; text-align:right; max-width:55%}
+  .hero-note{border-radius:12px; align-items:flex-start; padding:10px 14px}
+  .hero-note svg{margin-top:2px}
   .tstep{padding-left:46px}
   .tnum{width:30px; height:30px; font-size:.85rem}
   .timeline::before{left:14px}
+  .tstep.is-ok .tcard{padding:18px 18px}
+  .tcard{padding:16px 16px}
   .addr-k{flex-basis:100%}
   .kicker{padding:26px 16px}
-  .site-nav{font-size:.8rem}
+  .site-nav{font-size:.82rem}
+  /* keep the copy button clear of the first line once the command has to scroll */
+  .codeblock pre{padding:44px 18px 18px}
+  .race-col{padding:18px}
+  .op{font-size:.78rem; padding:9px 12px; flex-wrap:wrap}
+  .op-out{margin-left:0; padding-left:0; flex-basis:100%}
+}
+@media (max-width:460px){
+  /* two buttons of different label lengths read as ragged when centred — stack them */
+  .cta-row{flex-direction:column; align-items:stretch}
+  .btn{justify-content:center}
 }
 </style>
+<script>
+/* Gate the reveal animation before first paint, so nothing is ever shown and then hidden.
+   Same condition as the main script: motion allowed AND IntersectionObserver present. */
+(function(){try{
+  if(!window.matchMedia('(prefers-reduced-motion: reduce)').matches && 'IntersectionObserver' in window){
+    document.documentElement.className += ' js-anim';
+  }
+}catch(e){}})();
+</script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -350,19 +469,19 @@ td.hot{color:var(--text); font-weight:700}
 <main id="main">
 
   <!-- ================= HERO ================= -->
-  <section class="hero" id="top" style="border-top:none" aria-labelledby="hero-h">
+  <section class="hero" id="top" aria-labelledby="hero-h">
     <div class="container">
       <p class="eyebrow">Autonomous on-chain security agent · built on KeeperHub</p>
       <h1 id="hero-h">The agent that lands the revoke before the drainer moves.</h1>
-      <p class="sub">Token approvals are the most common wallet-drain vector — and every existing
-        tool is read-only. It tells you an approval is risky. Revoker <b>acts</b>: the moment a
-        threat rule fires, it executes <code>approve(spender,&nbsp;0)</code> through KeeperHub,
-        with no human in the loop.</p>
+      <p class="sub">Token approvals are the most common wallet-drain vector, and every tool built
+        for them is read-only: it tells you an approval is risky, and stops there.
+        <span class="turn">Revoker acts.</span> The moment a threat rule fires it executes
+        <code>approve(spender,&nbsp;0)</code> through KeeperHub, with no human in the loop.</p>
       <div class="cta-row">
         <a class="btn btn-primary" href="#proof">See the drain stopped</a>
         <a class="btn btn-ghost" href="https://github.com/edycutjong/revoker" rel="noopener">View source on GitHub<span aria-hidden="true">&nbsp;&#8599;</span></a>
       </div>
-      <p class="hero-note">Every number on this page links to a transaction you can open.</p>
+      <p class="hero-note"><svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6L9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Every number on this page links to a <b>transaction you can open</b>.</span></p>
 
       <div class="statband">
         <div class="stat reveal">
@@ -375,7 +494,7 @@ td.hot{color:var(--text); font-weight:700}
         </div>
         <div class="stat reveal">
           <span class="stat-v"><span class="count" data-to="46482" data-dec="0" data-sep="1">46,482</span></span>
-          <span class="stat-l">gas per revoke — flat,<br>sponsored 25/25</span>
+          <span class="stat-l">gas per revoke (p50)<br>sponsored 25/25</span>
         </div>
       </div>
     </div>
@@ -424,9 +543,9 @@ td.hot{color:var(--text); font-weight:700}
           <div class="tcard">
             <span class="ttag ok">The verdict</span>
             <h3>The drainer fires anyway</h3>
-            <p>The drain transaction <b style="color:var(--text)">succeeded</b>. It did not revert.
-              It was not blocked. It ran exactly as its author intended — and it found nothing
-              to take, because the approval was already gone.</p>
+            <p>The drain transaction <b>succeeded</b>. It did not revert. It was not blocked.
+              It ran exactly as its author intended — and it found nothing to take, because the
+              approval was already gone.</p>
             <div class="tmeta">
               <a class="tx" href="https://sepolia.etherscan.io/tx/0xe127f3d2e2eb20a9825fbec63c56028815ce145c8cdd9e143a02600e2da1a303" rel="noopener">0xe127f3d2&hellip;a1a303</a>
               <span class="tresult ok">drained: <b>0</b></span>
@@ -442,7 +561,7 @@ td.hot{color:var(--text); font-weight:700}
         <p class="k-sub">victim's balance unchanged: <b>10,000 mUSDC</b> across the whole sequence</p>
       </div>
 
-      <p class="relay-note"><b style="color:var(--text)">Reading the explorer links:</b> KeeperHub
+      <p class="relay-note"><b>Reading the explorer links:</b> KeeperHub
         executes through a sponsored relay, so the <code>from</code> address is KeeperHub's relayer —
         not the signer. The flow is <code>relayer 0x809d&hellip;0444 &rarr; forwarder 0x5af5&hellip;f07d &rarr;
         Turnkey account 0x5E2e&hellip;bab7</code>. The signer appears in the calldata; this is expected,
@@ -462,7 +581,7 @@ td.hot{color:var(--text); font-weight:700}
 
       <div class="codeblock">
         <button class="copy-btn" type="button" data-copy="cast call 0x4facb5FD1682c4449cAD42b7590861f7eD5c88Cb &quot;allowance(address,address)(uint256)&quot; 0x5E2e5Fd3aD7fDC9B94482930db8b5F45E439bab7 0x8eBf8540EdE8e40CD94825C418758d4029D8892e --rpc-url https://ethereum-sepolia-rpc.publicnode.com">Copy</button>
-        <pre><code style="all:unset;font-family:var(--mono)">cast call 0x4facb5FD1682c4449cAD42b7590861f7eD5c88Cb \
+        <pre><code>cast call 0x4facb5FD1682c4449cAD42b7590861f7eD5c88Cb \
   <span class="str">"allowance(address,address)(uint256)"</span> \
   0x5E2e5Fd3aD7fDC9B94482930db8b5F45E439bab7 \
   0x8eBf8540EdE8e40CD94825C418758d4029D8892e \
@@ -500,31 +619,37 @@ td.hot{color:var(--text); font-weight:700}
       <div class="race">
         <div class="race-col bad reveal">
           <h3>read-then-write <span class="who">a typical agent</span></h3>
-          <div class="op">allowance = read()&nbsp; <span style="color:var(--muted)">&rarr; 1.157e77</span></div>
-          <div class="race-gap">
-            <span class="gap-label">front-run window</span>
-            The drainer sees the pending revoke in the mempool and slips a
-            <code>transferFrom</code> in here — before the revoke lands.
+          <div class="race-body">
+            <div class="op"><span class="op-n" aria-hidden="true">1</span>read allowance<span class="op-out">&rarr; 1.157e77</span></div>
+            <div class="race-gap">
+              <span class="gap-label">front-run window</span>
+              The drainer sees the pending revoke in the mempool and slips a
+              <code>transferFrom</code> in here — before the revoke lands.
+            </div>
+            <div class="op"><span class="op-n" aria-hidden="true">2</span>approve(spender, 0)</div>
           </div>
-          <div class="op">approve(spender, 0)</div>
           <div class="verdict bad">Decides at time T, acts at T+n. The window <em>is</em> the attack surface.</div>
         </div>
+        <div class="race-vs" aria-hidden="true">versus</div>
         <div class="race-col good reveal">
           <h3>check-and-execute <span class="who">Revoker, via KeeperHub</span></h3>
-          <div class="atomic-box">
-            <div class="op">re-read allowance — live chain state</div>
-            <div class="atomic-arrow" aria-hidden="true">&darr;</div>
-            <div class="op">approve(spender, 0)</div>
-            <span class="atomic-tag">one atomic server-side operation</span>
+          <div class="race-body">
+            <div class="atomic-box">
+              <div class="op"><span class="op-n" aria-hidden="true">1</span>read allowance<span class="op-out">live chain state</span></div>
+              <div class="atomic-arrow" aria-hidden="true">&darr;</div>
+              <div class="op"><span class="op-n" aria-hidden="true">2</span>approve(spender, 0)</div>
+              <span class="atomic-tag">one atomic server-side operation</span>
+            </div>
           </div>
-          <div class="verdict good">No gap between check and act. Nothing to front-run.</div>
+          <div class="verdict good">Same two steps, no gap between them. Nothing to front-run.</div>
         </div>
       </div>
 
       <div class="observed">
-        The condition is evaluated against the live chain, not a value this process passed in.
-        On the reference run KeeperHub reported, at execution time:
+        <p>The condition is evaluated against the live chain, not a value this process passed in.
+        On the reference run KeeperHub reported, at execution time:</p>
         <pre>observedValue: 115792089237316195423570985008687907853269984665640564039457584007913129639935</pre>
+        <span class="obs-eq">= 2<sup>256</sup> &minus; 1 &mdash; the MAX_UINT256 allowance, re-read server-side.</span>
       </div>
 
       <div class="custody reveal">
@@ -586,8 +711,9 @@ td.hot{color:var(--text); font-weight:700}
       </div>
 
       <div class="tablewrap">
+        <div class="tablescroll">
         <table>
-          <caption class="visually-hidden" style="position:absolute;left:-9999px">Latency distribution over 25 cycles</caption>
+          <caption class="vh">Latency distribution over 25 cycles</caption>
           <thead>
             <tr><th scope="col">Metric</th><th scope="col">p50</th><th scope="col">p95</th><th scope="col">min</th><th scope="col">max</th></tr>
           </thead>
@@ -602,10 +728,11 @@ td.hot{color:var(--text); font-weight:700}
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
       <div class="bench-meta">
         <span>cycles: <b>25/25 succeeded</b></span>
-        <span>gas per revoke: <b>46,482 flat</b></span>
+        <span>gas per revoke: <b>46,482</b> (p50 = p95)</span>
         <span>sponsored: <b>25/25</b></span>
       </div>
 
@@ -651,8 +778,10 @@ td.hot{color:var(--text); font-weight:700}
         atomic <code>check-and-execute</code> and the enclave-held key are things a standalone
         script cannot honestly replicate.</p>
 
-      <div class="tablewrap" style="margin-top:26px">
+      <div class="tablewrap kh-table">
+        <div class="tablescroll">
         <table>
+          <caption class="vh">KeeperHub API surfaces used by Revoker</caption>
           <thead>
             <tr><th scope="col">Surface</th><th scope="col">Used for</th></tr>
           </thead>
@@ -669,6 +798,7 @@ td.hot{color:var(--text); font-weight:700}
             <tr><td>Idempotency-Key</td><td class="rowlabel">safe retries without double-execution</td></tr>
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   </section>
@@ -761,9 +891,9 @@ td.hot{color:var(--text); font-weight:700}
         <a href="https://sepolia.etherscan.io/address/0x5E2e5Fd3aD7fDC9B94482930db8b5F45E439bab7" rel="noopener">Watched wallet on Etherscan</a>
       </nav>
     </div>
-    <p class="foot-line">Built for <a href="https://dorahacks.io/hackathon/agents-onchain" rel="noopener">Agents Onchain</a>
-      by KeeperHub · MIT license · every claim on this page traces to a transaction or the
-      <a href="https://github.com/edycutjong/revoker" rel="noopener">repository</a>.</p>
+    <p class="foot-line">Built for <a href="https://dorahacks.io/hackathon/agents-onchain" rel="noopener">Agents Onchain</a>,
+      KeeperHub&rsquo;s hackathon · MIT license · every claim on this page traces to a transaction
+      or to the <a href="https://github.com/edycutjong/revoker" rel="noopener">repository</a>.</p>
   </div>
 </footer>
 
@@ -855,6 +985,59 @@ td.hot{color:var(--text); font-weight:700}
       }
     });
   });
+
+  /* ---------- horizontal-scroll affordance ----------
+     Tables, the cast command and the mobile nav all scroll inside themselves;
+     mark the host while there is still content to the right so CSS can fade the edge. */
+  function scrollHint(host, scroller) {
+    if (!host || !scroller) return;
+    function update() {
+      host.classList.toggle('has-more',
+        scroller.scrollWidth - scroller.clientWidth - scroller.scrollLeft > 2);
+    }
+    scroller.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update);
+    update();
+  }
+  document.querySelectorAll('.tablewrap').forEach(function (w) { scrollHint(w, w.querySelector('.tablescroll')); });
+  document.querySelectorAll('.codeblock').forEach(function (c) { scrollHint(c, c.querySelector('pre')); });
+  var siteNav = document.querySelector('.site-nav');
+  scrollHint(siteNav, siteNav);
+
+  /* ---------- current-section indicator in the sticky nav ----------
+     A single reading line at 35% of the viewport decides which section is "current";
+     simpler and more predictable than threshold observers on sections of wildly
+     different heights. Not motion — it runs under prefers-reduced-motion too. */
+  var navFor = {}, navIds = [];
+  document.querySelectorAll('.site-nav a[href^="#"]').forEach(function (a) {
+    var id = a.getAttribute('href').slice(1);
+    if (document.getElementById(id)) { navFor[id] = a; navIds.push(id); }
+  });
+  if (navIds.length) {
+    var ticking = false;
+    function markCurrent() {
+      ticking = false;
+      /* navIds are in document order, so the last one whose top has passed the
+         reading line is the current one — and sections with no nav entry
+         (Rules, KeeperHub, Demo) keep the previous marker lit rather than blanking it. */
+      var line = window.innerHeight * 0.35, current = null;
+      navIds.forEach(function (id) {
+        if (document.getElementById(id).getBoundingClientRect().top <= line) current = id;
+      });
+      navIds.forEach(function (id) {
+        if (id === current) navFor[id].setAttribute('aria-current', 'true');
+        else navFor[id].removeAttribute('aria-current');
+      });
+    }
+    function onScroll() {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(markCurrent);
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    markCurrent();
+  }
 
   /* ---------- reveal + count-up (skipped entirely under reduced motion) ---------- */
   function setFinal() {

@@ -109,6 +109,20 @@ jobs:
         working-directory: contracts
         run: forge test -vvv
 
+      - name: Coverage must stay at 100%
+        working-directory: contracts
+        run: |
+          # This Foundry build has no --fail-under, so assert on the summary.
+          # The contracts are small and security-relevant; anything less than
+          # full branch coverage means an untested failure path.
+          forge coverage --report summary | tee coverage.txt
+          if grep -E '^\| (src/|Total)' coverage.txt | grep -qv '100.00%'; then
+            echo "::error::Solidity coverage dropped below 100%"
+            grep -E '^\| (src/|Total)' coverage.txt
+            exit 1
+          fi
+          echo "Solidity coverage: 100% lines / statements / branches / functions"
+
   # Everything above must pass before the branch is considered shippable.
   # Note on scope: the on-chain integration proof (`pnpm spike`, `pnpm seed`,
   # `pnpm bench`) is deliberately NOT run here. It needs a funded wallet and an
