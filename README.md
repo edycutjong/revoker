@@ -1,11 +1,11 @@
 <div align="center">
 
-  <img src="docs/assets/icon.svg" alt="Revoker icon" width="120">
+  <img src="docs/icon-animated.svg" alt="Revoker icon" width="120">
 
   <h1>Revoker</h1>
   <p><em>The agent that lands the revoke before the drainer moves.</em></p>
 
-  <img src="docs/assets/readme-hero-animated.svg" alt="Revoker — an approval turns dangerous, two threat rules fire, the revoke lands through KeeperHub, and the drainer takes nothing" width="100%">
+  <img src="docs/readme-hero-animated.svg" alt="Revoker — an approval turns dangerous, two threat rules fire, the revoke lands through KeeperHub, and the drainer takes nothing" width="100%">
 
   <p>
     We let the drain contract fire <strong>after</strong> the revoke.<br/>
@@ -76,19 +76,26 @@ KeeperHub — landing a real, linkable, state-changing transaction.
 
 ## 🏗️ Architecture & Tech Stack
 
-```
-Approval / ApprovalForAll logs
-            │
-            ▼
-      watcher  ──▶  3 concrete threat rules
-                            │  fires
-                            ▼
-        KeeperHub  POST /api/execute/check-and-execute
-              re-read allowance  +  approve(spender, 0)
-                     in ONE atomic operation
-                            │
-                            ▼
-              real transaction  ──▶  audit trail
+```mermaid
+flowchart TD
+    A["Approval / ApprovalForAll logs"] --> B[watcher]
+    B --> C{3 threat rules}
+    C -->|none fire| D["threat.cleared — keep watching"]
+    C -->|any fires| E["KeeperHub<br/>POST /api/execute/check-and-execute"]
+    E --> F["re-read allowance<br/>+ approve spender, 0<br/><b>ONE atomic operation</b>"]
+    F --> G["eth_call: confirm allowance == 0"]
+    G -->|zero| H["revoke.confirmed"]
+    G -->|non-zero| I["revoke.failed — retried next scan"]
+    H --> J[("audit trail")]
+    I --> J
+    D --> J
+
+    classDef threat fill:#2a1416,stroke:#ff5c5c,color:#ffb3b3
+    classDef act fill:#1a1f2e,stroke:#4ea1ff,color:#cfe4ff
+    classDef ok fill:#12241a,stroke:#35d07f,color:#a9e9c6
+    class C threat
+    class E,F act
+    class H,J ok
 ```
 
 The revoke goes through `check-and-execute` rather than a read followed by a

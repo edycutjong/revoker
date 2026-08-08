@@ -13,3 +13,4 @@ audit/
 contracts/lib/
 contracts/coverage.txt
 contracts/lcov.info
+docs/assets/

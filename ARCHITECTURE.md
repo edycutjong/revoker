@@ -41,14 +41,29 @@ re-reads state server-side regardless.
 
 The revoke uses `check-and-execute`, not a read followed by a write.
 
-```
-read-then-write                      check-and-execute
-──────────────                       ─────────────────
-allowance = read()                   ┌─────────────────────────┐
-  ⚠ drainer front-runs here          │ read allowance          │
-if allowance > 0:                    │ if > 0: approve(spender,0) │
-    approve(spender, 0)              └─────────────────────────┘
-                                      one server-side operation
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as Agent
+    participant C as Chain
+    participant D as Drainer
+
+    rect rgba(255,92,92,.10)
+    Note over A,D: read-then-write — a window exists
+    A->>C: read allowance
+    C-->>A: MAX_UINT256
+    D->>C: transferFrom (front-runs the pending revoke)
+    A->>C: approve(spender, 0)
+    Note right of D: funds already gone
+    end
+
+    rect rgba(53,208,127,.10)
+    Note over A,D: check-and-execute — no window
+    A->>C: read allowance AND approve(spender,0)<br/>in ONE server-side operation
+    C-->>A: executed, allowance = 0
+    D->>C: transferFrom
+    Note right of D: nothing left to take
+    end
 ```
 
 A read-then-write agent decides at time T and acts at time T+n. That window is
@@ -97,7 +112,7 @@ premise is *still watching at 3am* has to survive the night.
 | Failure | Behaviour |
 |---|---|
 | RPC or API error mid-scan | logged, loop continues — a transient failure must not kill the watcher |
-| KeeperHub 429 / 5xx | exponential backoff honouring `Retry-After`, max 4 attempts |
+| KeeperHub 429 / 5xx | exponential backoff honouring `Retry-After`, up to 4 retries (5 requests total) |
 | KeeperHub 4xx | **not** retried — a bad request stays bad, and replaying a write risks double-execution |
 | Rate limit approached | client-side pacing at 60 req/min, before the server has to reject |
 | Revoke reports success but allowance is non-zero | reported as `revoke.failed`, retried next scan |
@@ -134,7 +149,7 @@ Surfaces used:
 | `GET /api/chains/{id}/abi` | **source-verification signal for rule 1** |
 | `GET /api/user/wallet` | signer identity assertion |
 | `GET /api/user/wallet/balances` | token discovery (curated registry) |
-| `simulate: true` | pre-flight dry runs |
+| `simulate: true` | dry-run validation in the integration spike |
 | `Idempotency-Key` | safe retries without double-execution |
 
 ---

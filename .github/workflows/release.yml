@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    name: Semantic version
+    runs-on: ubuntu-latest
+    steps:
+      # release-please derives the next semver from Conventional Commits since
+      # the last release, opens a release PR with generated notes, and cuts the
+      # tag + GitHub Release when that PR merges.
+      #
+      # Note on this repo's history: the first 20 commits are deliberately
+      # prose, not `feat:`/`fix:` prefixed — commit messages here are written to
+      # be read. release-please will simply find nothing to release from them,
+      # which is correct rather than broken. It takes over from the first
+      # conventional commit onward; see CONTRIBUTING.md.
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: .release-please-config.json
+          manifest-file: .release-please-manifest.json
