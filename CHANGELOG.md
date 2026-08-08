@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.7.0](https://github.com/edycutjong/revoker/compare/v1.6.0...v1.7.0) (2026-08-08)
+
+
+### Features
+
+* safety rails, a real coverage gate, and executionId plumbing ([662b41d](https://github.com/edycutjong/revoker/commit/662b41d384490732c00d704e7731c4e37fc8253d))
+
+
+### Fixes
+
+* retract three claims still live on the site, and stop printing "undefined" ([8efc9e0](https://github.com/edycutjong/revoker/commit/8efc9e03e8f44a7230a78679fea36dfee24644ad))
+
+
+### Documentation
+
+* fix seven drifted claims and reconcile every number ([624e6a0](https://github.com/edycutjong/revoker/commit/624e6a06c3e20728e92deca93e4bc5c4a0617507))
+* publish a live executionId that resolves against KeeperHub's record ([b8fe42d](https://github.com/edycutjong/revoker/commit/b8fe42db0d3e993f9354c6605fda1761707c5387))
+* soften the last sentence that read as a front-running claim ([d7c90ff](https://github.com/edycutjong/revoker/commit/d7c90ffcae63ace3516786dd0853d85d4a004fa5))
+
 ## [1.6.0](https://github.com/edycutjong/revoker/compare/v1.5.2...v1.6.0) (2026-08-08)
 
 
