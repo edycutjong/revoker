@@ -1,6 +1,36 @@
-# Revoker
+<div align="center">
 
-**The agent that lands the revoke before the drainer moves.**
+  <h1>Revoker 🛡️</h1>
+  <p><em>The agent that lands the revoke before the drainer moves.</em></p>
+
+  <p>
+    We let the drain contract fire <strong>after</strong> the revoke.<br/>
+    It succeeded, and it took <strong>zero</strong>.<br/>
+    <a href="https://sepolia.etherscan.io/tx/0xe127f3d2e2eb20a9825fbec63c56028815ce145c8cdd9e143a02600e2da1a303">See the transaction</a>.
+  </p>
+
+  <br/>
+
+  [![Built for Agents Onchain](https://img.shields.io/badge/DoraHacks-Agents_Onchain-8b5cf6?style=for-the-badge)](https://dorahacks.io/hackathon/agents-onchain)
+  [![Execution layer: KeeperHub](https://img.shields.io/badge/⚡_Execution-KeeperHub-06b6d4?style=for-the-badge)](https://keeperhub.com)
+
+  <br/>
+
+  ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white)
+  ![Node](https://img.shields.io/badge/Node_22-339933?style=flat&logo=node.js&logoColor=white)
+  ![Solidity](https://img.shields.io/badge/Solidity_0.8.28-363636?style=flat&logo=solidity&logoColor=white)
+  ![Foundry](https://img.shields.io/badge/Foundry-000000?style=flat)
+  ![Ethereum](https://img.shields.io/badge/Sepolia-3C3C3D?style=flat&logo=ethereum&logoColor=white)
+  [![License](https://img.shields.io/badge/License-MIT-yellow)](https://opensource.org/licenses/MIT)
+  [![CI](https://github.com/edycutjong/revoker/actions/workflows/ci.yml/badge.svg)](https://github.com/edycutjong/revoker/actions/workflows/ci.yml)
+
+</div>
+
+---
+
+## 💡 The Problem & Solution
+
+### The Problem
 
 Token approvals are the most common wallet-drain vector. You grant
 `approve(spender, MAX_UINT256)` once to try a new dApp, then forget it exists.
@@ -11,13 +41,96 @@ The industry's answer to this is **read-only**: scanners and trust scores that
 *tell you* an approval is risky. KeeperHub's own marketplace has
 `token-approval-risk-scanner-*` and `wallet-trust-score-*`. None of them **act**.
 
+### The Solution
+
 Revoker acts. It watches a wallet's live approval set and, the instant a concrete
 threat condition fires, autonomously executes `approve(spender, 0)` through
 KeeperHub — landing a real, linkable, state-changing transaction.
 
 ---
 
-## Proof of execution
+## 🏗️ Architecture & Tech Stack
+
+```
+Approval / ApprovalForAll logs
+            │
+            ▼
+      watcher  ──▶  3 concrete threat rules
+                            │  fires
+                            ▼
+        KeeperHub  POST /api/execute/check-and-execute
+              re-read allowance  +  approve(spender, 0)
+                     in ONE atomic operation
+                            │
+                            ▼
+              real transaction  ──▶  audit trail
+```
+
+The revoke goes through `check-and-execute` rather than a read followed by a
+write. That matters: the allowance is re-read and the revoke fired inside the
+same server-side operation, so a drainer cannot slip a `transferFrom` between our
+check and our act. A check-then-act implementation has a race window; this
+does not.
+
+| Layer | Technology | Why |
+|---|---|---|
+| Execution + custody | **KeeperHub** | Signs via a Turnkey enclave — this process never holds a private key |
+| Chain reads | viem + public RPC | The watcher polls continuously; an execution API round trip would add latency to the number that matters |
+| Contracts | Solidity 0.8.28, Foundry | Dependency-free fixtures, so the demo reproduces with no package installs |
+| Runtime | TypeScript strict, Node 22 | `noUncheckedIndexedAccess`, `verbatimModuleSyntax` |
+| Dashboard | Node `http` + SSE, zero-dependency HTML | No CDN, no build step |
+| Tests | Vitest + Foundry | 44 unit + 11 Solidity, weighted toward the negatives |
+
+### Threat rules
+
+| Rule | Fires when | Signal source |
+|---|---|---|
+| `unlimited-to-unverified` | `MAX_UINT256` allowance to a contract whose source is unreadable | KeeperHub ABI resolution |
+| `young-spender` | spender contract deployed < 7 days ago | `eth_getCode`, binary search |
+| `denylisted` | spender is on the known-bad list | `data/denylist.json` |
+
+Any one rule firing is sufficient — these are independent signals of different
+kinds, not weighted terms in a score. Requiring consensus would mean ignoring a
+confirmed deny-list hit because the contract happened to be verified.
+
+Every firing carries the evidence that produced it into the audit trail, so a
+revoke can be justified after the fact. Deliberately not an ML "maliciousness
+score": *the model said so* is not a defence when it is wrong.
+
+---
+
+## 🏆 KeeperHub Integration
+
+Remove KeeperHub and Revoker needs seven separate systems: a transaction
+relayer, a congestion-aware gas oracle with backoff, an MEV-protected submission
+route, a status/confirmation poller, an action-discovery layer, an ABI
+resolution service, and an audit-log pipeline — plus a custody solution.
+KeeperHub signs through a Turnkey enclave, so this process never holds a private
+key.
+
+**10 distinct surfaces across 23 call sites:**
+
+| Surface | Used for | Where |
+|---|---|---|
+| `POST /api/execute/check-and-execute` | the atomic revoke | `src/revoke.ts` |
+| `POST /api/execute/contract-call` | allowance reads, contract writes | `src/keeperhub.ts` |
+| `POST /api/execute/transfer` | native transfers | `scripts/spike.ts` |
+| `GET /api/execute/{id}/status` | confirmation, gas, sponsorship, audit record | `src/revoke.ts` |
+| `GET /api/chains` | network + explorer resolution | `scripts/spike.ts` |
+| `GET /api/chains/{id}/abi` | **source-verification signal for threat rule 1** | `src/rules.ts` |
+| `GET /api/user/wallet` | signer identity assertion | `scripts/spike.ts` |
+| `GET /api/user/wallet/balances` | token discovery | `src/watcher.ts` |
+| `simulate: true` | pre-flight dry runs before spending gas | `src/keeperhub.ts` |
+| `Idempotency-Key` | safe retries without double-execution | `src/keeperhub.ts` |
+
+The ABI endpoint is worth calling out: it does not merely fetch ABIs here, it
+**powers a threat rule**. Unverified source is not proof of malice, but it means
+nobody can read what the code does — exactly the position a victim is in when
+they grant an unlimited approval.
+
+---
+
+## ⛓️ Live Deployment
 
 Every claim below links to a transaction anyone can verify.
 
@@ -35,26 +148,6 @@ Step 3 is the one that matters. The drain transaction **succeeded** — it did n
 revert, it was not blocked, it ran exactly as its author intended. It simply had
 nothing left to take, because the approval was already gone. The victim's balance
 is unchanged at 10,000 mUSDC across the whole sequence.
-
-### How fast, measured over 25 cycles
-
-| Metric | p50 | p95 | min | max |
-|---|---|---|---|---|
-| **response** — detection → revoke confirmed | **12.95s** | 24.88s | 10.33s | 24.95s |
-| **exposure** — threat live → revoke confirmed | **13.38s** | 25.01s | 10.47s | 25.28s |
-
-25/25 cycles succeeded. Gas per revoke was a flat 46,482, sponsored in every
-cycle. Two figures rather than one because conflating the agent's own speed with
-the user's real exposure window would flatter the result.
-
-Neither figure includes polling delay — the benchmark triggers detection
-immediately rather than waiting for the timer, so a deployment polling every
-`pollIntervalMs` adds an average of `pollIntervalMs/2` on top. The p95 is more
-than double the p50 because four consecutive cycles hit a slow block-inclusion
-window; that variance is the network's, not the agent's, which is exactly why
-this is reported as a distribution instead of a headline number.
-
-Full per-cycle transaction links: [BENCHMARK.md](./BENCHMARK.md).
 
 Verify it yourself, no credentials needed:
 
@@ -101,117 +194,50 @@ signer address in the `from` field.
 
 ---
 
-## Architecture
+## 📊 Engineering Rigor
 
-```
-Approval / ApprovalForAll logs
-            │
-            ▼
-      watcher  ──▶  3 concrete threat rules
-                            │  fires
-                            ▼
-        KeeperHub  POST /api/execute/check-and-execute
-              re-read allowance  +  approve(spender, 0)
-                     in ONE atomic operation
-                            │
-                            ▼
-              real transaction  ──▶  audit trail
-```
+### How fast, measured over 25 cycles
 
-The revoke goes through `check-and-execute` rather than a read followed by a
-write. That matters: the allowance is re-read and the revoke fired inside the
-same server-side operation, so a drainer cannot slip a `transferFrom` between our
-check and our act. A check-then-act implementation has a race window; this
-does not.
+| Metric | p50 | p95 | min | max |
+|---|---|---|---|---|
+| **response** — detection → revoke confirmed | **12.95s** | 24.88s | 10.33s | 24.95s |
+| **exposure** — threat live → revoke confirmed | **13.38s** | 25.01s | 10.47s | 25.28s |
 
-### Why KeeperHub is the engine, not decoration
+25/25 cycles succeeded. Gas per revoke was a flat 46,482, sponsored in every
+cycle. Two figures rather than one because conflating the agent's own speed with
+the user's real exposure window would flatter the result.
 
-Remove KeeperHub and Revoker needs seven separate systems: a transaction
-relayer, a congestion-aware gas oracle with backoff, an MEV-protected submission
-route, a status/confirmation poller, an action-discovery layer, an ABI
-resolution service, and an audit-log pipeline — plus a custody solution.
-KeeperHub signs through a Turnkey enclave, so this process never holds a private
-key.
+Neither figure includes polling delay — the benchmark triggers detection
+immediately rather than waiting for the timer, so a deployment polling every
+`pollIntervalMs` adds an average of `pollIntervalMs/2` on top. The p95 is more
+than double the p50 because four consecutive cycles hit a slow block-inclusion
+window; that variance is the network's, not the agent's, which is exactly why
+this is reported as a distribution instead of a headline number.
 
-KeeperHub surfaces used so far:
+Full per-cycle transaction links: [BENCHMARK.md](./BENCHMARK.md).
 
-| Surface | Used for |
-|---|---|
-| `POST /api/execute/check-and-execute` | the atomic revoke |
-| `POST /api/execute/contract-call` | allowance reads, contract writes |
-| `POST /api/execute/transfer` | native transfers |
-| `GET /api/execute/{id}/status` | confirmation + audit record |
-| `GET /api/chains` | network + explorer resolution |
-| `GET /api/chains/{id}/abi` | ABI resolution |
-| `GET /api/user/wallet` | signer identity |
-| `simulate: true` | pre-flight dry runs before spending gas |
+### Test suite
+
+| Layer | Count | What it pins |
+|---|---|---|
+| Threat rules | 15 | True-positives, and that a verified/aged/non-deny-listed spender raises **no** threat |
+| KeeperHub client | 14 | 4xx is **not** retried; `isSourceVerified` fails **closed** |
+| Revoke path | 7 | Reports failure when the API claims success but the allowance survives |
+| Audit trail | 8 | bigint serialisation; a broken subscriber cannot stop the loop |
+| Solidity | 11 | The drain **succeeds and takes zero** post-revoke; 256-run fuzz |
+| **Total** | **55** | |
+
+CI runs three jobs behind a gate — quality (lint, types, coverage), security
+(`pnpm audit`, gitleaks over full history, a credential grep that fails the
+build), and contracts (`forge build --sizes`, `forge test`).
+
+The on-chain proof is deliberately **not** in CI: it needs a funded wallet and an
+org API key, and running it per-PR would spend real gas and put credentials in
+CI. It stays manual and reproducible — see [DEMO.md](./DEMO.md).
 
 ---
 
-## Running it
-
-Requires Node 22+, pnpm, and Foundry.
-
-```bash
-pnpm install
-cd contracts && forge build && cd ..
-
-pnpm spike              # prove the KeeperHub integration end-to-end
-pnpm seed               # stage the threat (idempotent — safe to re-run)
-pnpm watch -- --once    # watch Revoker detect it and take it away
-pnpm verify             # same, with the live dashboard at localhost:3000/verify
-pnpm bench              # p50/p95 over N=25 cycles
-pnpm test               # 15 tests
-```
-
-`pnpm watch -- --dry-run` detects and reports without executing anything.
-
-### The `/verify` dashboard
-
-`pnpm verify` runs the watcher and streams its audit trail to the browser over
-Server-Sent Events — pushed as decisions happen, not polled. Open
-`http://localhost:3000/verify`, then run `pnpm seed` in another terminal and
-watch the timeline animate: `threat.detected` → `revoke.submit` →
-`revoke.confirmed`, with the Etherscan link rendered the moment it lands.
-
-It is a long-lived process by necessity, not by preference: an agent that
-watches approvals continuously cannot be a serverless function, so `/verify` is
-served from the same process that does the watching.
-
-### Threat rules
-
-| Rule | Fires when | Signal source |
-|---|---|---|
-| `unlimited-to-unverified` | `MAX_UINT256` allowance to a contract whose source is unreadable | KeeperHub ABI resolution |
-| `young-spender` | spender contract deployed < 7 days ago | `eth_getCode`, binary search |
-| `denylisted` | spender is on the known-bad list | `data/denylist.json` |
-
-Any one rule firing is sufficient — these are independent signals of different
-kinds, not weighted terms in a score. Requiring consensus would mean ignoring a
-confirmed deny-list hit because the contract happened to be verified.
-
-Every firing carries the evidence that produced it into the audit trail, so a
-revoke can be justified after the fact. Deliberately not an ML "maliciousness
-score": *the model said so* is not a defence when it is wrong.
-
-Credentials resolve from `process.env`, then `~/.config/keeperhub/env`, then a
-local `.env`. Nothing secret is ever committed.
-
-```
-KH_API_KEY=kh_...                  # app.keeperhub.com -> Settings -> API Keys
-KH_WALLET_ADDRESS=0x...            # app.keeperhub.com -> Wallet tab
-KH_NETWORK=sepolia
-KH_CHAIN_ID=11155111
-SEPOLIA_RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
-```
-
-> **Note on the signer.** `approve(spender, 0)` clears the allowance of
-> `msg.sender` and nobody else's. KeeperHub signs exclusively for your org's
-> Turnkey account, so that account is necessarily both the watched wallet and
-> the revoke sender. The spike asserts your configured address matches the one
-> KeeperHub actually controls, and fails loudly if it does not.
-
-### Known limits, stated plainly
+## ⚠️ Known Limits, Stated Plainly
 
 **Token discovery requires an explicit watchlist** (`data/watchlist.json`). No
 public RPC will serve an address-less `eth_getLogs` over a useful block range —
@@ -230,28 +256,143 @@ degrades into a rubber stamp is worse than one that admits it cannot see. Point
 absent from the deny-list trips nothing. That case is out of scope, not silently
 mishandled.
 
+**Sepolia only.** Mainnet is a documented path, not executed — no real user funds
+are put at risk for a demo.
+
 ---
 
-## Status
+## 🚀 Getting Started
 
-This is an active hackathon build for
-[Agents Onchain](https://dorahacks.io/hackathon/agents-onchain) (KeeperHub).
+### Prerequisites
 
-Shipped: KeeperHub client with retry/backoff, rate-limit pacing and idempotency;
-seed contracts deployed to Sepolia; a verified integration spike; and the
-complete detect→revoke→proof cycle above. Landing next: the autonomous watcher
-with three threat rules, unit tests, `scripts/bench.ts` (p50/p95 over N=25), and
-the live `/verify` stream.
+Node 22+, pnpm 10+, and [Foundry](https://book.getfoundry.sh/).
 
-## Documentation
+You also need a KeeperHub organisation API key and its Turnkey wallet address to
+run anything that touches a chain.
+
+### Installation
+
+```bash
+pnpm install
+cd contracts && forge install foundry-rs/forge-std --no-git && forge build && cd ..
+```
+
+Credentials resolve from `process.env`, then `~/.config/keeperhub/env`, then a
+local `.env`. Copy [`.env.example`](./.env.example) to start. Nothing secret is
+ever committed.
+
+```
+KH_API_KEY=kh_...                  # app.keeperhub.com -> Settings -> API Keys
+KH_WALLET_ADDRESS=0x...            # app.keeperhub.com -> Wallet tab
+KH_NETWORK=sepolia
+KH_CHAIN_ID=11155111
+SEPOLIA_RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
+```
+
+> **Note on the signer.** `approve(spender, 0)` clears the allowance of
+> `msg.sender` and nobody else's. KeeperHub signs exclusively for your org's
+> Turnkey account, so that account is necessarily both the watched wallet and
+> the revoke sender. The spike asserts your configured address matches the one
+> KeeperHub actually controls, and fails loudly if it does not.
+
+### Run it
+
+```bash
+pnpm spike              # prove the KeeperHub integration end-to-end
+pnpm seed               # stage the threat (idempotent — safe to re-run)
+pnpm watch -- --once    # watch Revoker detect it and take it away
+pnpm verify             # same, with the live dashboard at localhost:3000/verify
+pnpm bench              # p50/p95 over N=25 cycles
+```
+
+`pnpm watch -- --dry-run` detects and reports without executing anything.
+
+### The `/verify` dashboard
+
+`pnpm verify` runs the watcher and streams its audit trail to the browser over
+Server-Sent Events — pushed as decisions happen, not polled. Open
+`http://localhost:3000/verify`, then run `pnpm seed` in another terminal and
+watch the timeline animate: `threat.detected` → `revoke.submit` →
+`revoke.confirmed`, with the Etherscan link rendered the moment it lands.
+
+It is a long-lived process by necessity, not by preference: an agent that
+watches approvals continuously cannot be a serverless function, so `/verify` is
+served from the same process that does the watching.
+
+---
+
+## 🧪 Testing & CI
+
+```bash
+pnpm check              # everything CI runs
+pnpm test               # 44 unit tests
+pnpm contracts:test     # 11 Solidity tests, incl. a 256-run fuzz
+pnpm lint               # eslint
+pnpm typecheck          # tsc --noEmit
+```
+
+`make help` lists every target.
+
+> `pnpm ci` is a **reserved pnpm command** and silently shadows a script of that
+> name — the script here is `pnpm check`.
+
+---
+
+## 📁 Project Structure
+
+```
+src/
+  keeperhub.ts     KeeperHub client — retry/backoff, rate pacing, idempotency
+  watcher.ts       the autonomous loop: scan → assess → revoke
+  rules.ts         the three threat rules
+  revoke.ts        the atomic check-and-execute revoke
+  chain.ts         read-side chain access (viem)
+  audit.ts         structured audit trail + SSE subscriber hook
+  server.ts        the /verify dashboard
+scripts/
+  spike.ts         7-step integration proof
+  seed.ts          idempotent threat staging
+  bench.ts         N=25 p50/p95 benchmark
+contracts/
+  src/             MockUSDC, RoachMotelSpender
+  test/            Solidity tests + fuzz
+```
+
+---
+
+## 🗺️ Roadmap
+
+- [x] Real transaction executed through KeeperHub
+- [x] Autonomous watch → detect → revoke loop
+- [x] Three auditable threat rules
+- [x] Reproducible seed + p50/p95 benchmark
+- [x] Live SSE dashboard
+- [x] CI, security scanning, 55 tests
+- [ ] Indexer-backed token discovery, removing the watchlist limit
+- [ ] Mainnet with a policy layer — spending caps, daily revoke ceiling, allow-list escape hatch
+
+---
+
+## 📚 Documentation
 
 | Document | What's in it |
 |---|---|
 | [DEMO.md](./DEMO.md) | Reproduce everything from a clean checkout, with expected output |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | The loop, the TOCTOU decision, failure modes, why KeeperHub |
-| [BENCHMARK.md](./BENCHMARK.md) | p50/p95 detect→revoke latency over N=25, per-cycle transaction links |
+| [BENCHMARK.md](./BENCHMARK.md) | p50/p95 latency over N=25, per-cycle transaction links |
 | [deployments.json](./deployments.json) | Contract addresses and deploy transactions |
+| [.github/SECURITY.md](./.github/SECURITY.md) | Threat model, and what does *not* count as a vulnerability |
 
-## License
+---
+
+## 📄 License
 
 MIT — see [LICENSE](./LICENSE).
+
+---
+
+## 🙏 Acknowledgments
+
+Built for [Agents Onchain](https://dorahacks.io/hackathon/agents-onchain) by
+[KeeperHub](https://keeperhub.com) — the execution and reliability layer this
+agent runs on.
