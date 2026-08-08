@@ -459,10 +459,13 @@ flowchart TD
 ```
 
 The revoke goes through `check-and-execute` rather than a read followed by a
-write. That matters: the allowance is re-read and the revoke fired inside the
-same server-side operation, so a drainer cannot slip a `transferFrom` between
-our check and our act. A check-then-act implementation has a race window; this
-does not. Full reasoning, failure modes and the Permit2 guard-helper detour:
+write. That matters, and it matters for a narrower reason than it first sounds:
+the allowance is re-read and the revoke fired inside the same server-side
+operation, so we never act on a stale read of our own. **It does not stop a
+drainer front-running the revoke in the mempool** — nothing here can, the
+guarded path exposes no fee override, and 13.47s is far too slow to win that
+race. The window this closes is the one a worse implementation would have
+opened. Full reasoning, failure modes and the Permit2 guard-helper detour:
 [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 | Layer | Technology | Why |
