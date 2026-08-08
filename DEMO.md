@@ -105,7 +105,7 @@ cast call 0x4facb5FD1682c4449cAD42b7590861f7eD5c88Cb \
 🚨 threat.detected   mUSDC  allowance=MAX_UINT256  atRisk=10000000000
                      rules=[unlimited-to-unverified, denylisted]
 ↗  revoke.submit     method=check-and-execute
-✅ revoke.confirmed  0x96028414…  allowanceAfter=0  sponsored=true
+✅ revoke.confirmed  0x15f0f816…  allowanceAfter=0  sponsored=true
 ```
 
 No manual step happens between detection and revoke. Use `--dry-run` to watch it
@@ -171,7 +171,7 @@ result: `response` (detection → confirmed, the agent's own speed) and `exposur
 
 ## 6. Tests — `pnpm test`
 
-233 tests — 157 TypeScript (`pnpm test`, 100% coverage on `src/`), 42 Solidity at 100% coverage, and 34 Playwright E2E
+598 tests — 522 TypeScript (`pnpm test`, 100% coverage on `src/` and `scripts/`), 42 Solidity at 100% coverage, and 34 Playwright E2E
 (`pnpm contracts:test`). The negatives matter most: a verified,
 aged, non-deny-listed spender must raise **no** threat — an agent that cries
 wolf gets turned off.

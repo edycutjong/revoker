@@ -66,12 +66,22 @@ The industry's answer to this is **read-only**: scanners and trust scores that
 **"Isn't this already solved?"** is the fair question, and the honest answer is
 that prior art exists but takes a different shape.
 
-**Revoke.cash** is the reference tool, and it is excellent — but it is a
-dashboard. You visit it, you look at your approvals, you click revoke, you sign.
-It is a manual audit you have to remember to perform, and the approval you forgot
-about is by definition the one you will not think to go and check. Revoker is the
-same operation with the human removed from the loop: a policy that runs
-continuously, so hygiene does not depend on you remembering.
+**Revoke.cash** is the reference tool, and its Ultimate tier already automates
+this: continuous monitoring and rule-based automatic revoking, on 11 mainnet
+networks, gas budget included. Any claim here that it is "just a dashboard" would
+be the easiest sentence in this README to disprove, so we are not making it.
+
+The non-overlap is the **wallet**, not the feature. Automated Revoking works by a
+human connecting MetaMask and configuring rules — a funnel that never reaches a
+headless signer. Revoker is a self-hostable policy engine for wallets that have
+no human at all: agent hot wallets, keeper bots, liquidation and rebalancing
+signers. Those wallets accumulate router approvals as a routine side effect of
+every venue they integrate, nobody ever opens a dashboard to audit them, and
+"nobody is awake to check" is true *by design* rather than by neglect.
+
+Their terms also state automated revoking is best-effort, with no guarantee an
+approval is revoked in time to prevent loss. That is honest, and it is true of us
+too — see [Known Limits](#known-limits-stated-plainly).
 
 The commercial attempt at automated wallet rescue — Harpie was the best-known,
 and it shut down in March 2025 — worked by **racing the drainer**: watch the
@@ -97,7 +107,7 @@ Revoker acts. It watches a wallet's live approval set continuously and, whenever
 an allowance fails policy, autonomously executes `approve(spender, 0)` through
 KeeperHub — landing a real, linkable, state-changing transaction.
 
-The three rules below are a **policy about what may stand**, not a detector
+The rules below are a **policy about what may stand**, not a detector
 trying to spot an attack in progress. An unlimited allowance to a contract nobody
 can read is not permitted to sit there for months, whether or not it has turned
 malicious yet. That distinction is the whole design: a detector has to be right
@@ -113,8 +123,8 @@ violation appears, not a claim about beating a drainer to the block.
 
 ```mermaid
 flowchart TD
-    A["ERC-20 Approval logs"] --> B[watcher]
-    B --> C{3 threat rules}
+    A["ERC-20 Approval logs<br/>Permit2 Approval / Permit / Lockdown logs"] --> B[watcher]
+    B --> C{4 threat rules}
     C -->|none fire| D["threat.cleared — keep watching"]
     C -->|any fires| E["KeeperHub<br/>POST /api/execute/check-and-execute"]
     E --> F["re-read allowance<br/>+ approve spender, 0<br/><b>ONE atomic operation</b>"]
@@ -146,7 +156,7 @@ does not.
 | Contracts | Solidity 0.8.28, Foundry | Dependency-free fixtures, so the demo reproduces with no package installs |
 | Runtime | TypeScript strict, Node 22 | `noUncheckedIndexedAccess`, `verbatimModuleSyntax` |
 | Dashboard | Node `http` + SSE, zero-dependency HTML | No CDN, no build step |
-| Tests | Vitest + Foundry | 157 unit + 42 Solidity + 34 E2E — 100% coverage on `src/` and on the contracts, weighted toward the negatives |
+| Tests | Vitest + Foundry | 522 unit + 42 Solidity + 34 E2E — 100% coverage on `src/`, `scripts/` and the contracts, weighted toward the negatives |
 
 ### Threat rules
 
@@ -302,12 +312,19 @@ Full per-cycle transaction links: [BENCHMARK.md](./BENCHMARK.md).
 
 | Layer | Count | What it pins |
 |---|---|---|
-| Threat rules | 15 | True-positives, and that a verified/aged/non-deny-listed spender raises **no** threat |
-| KeeperHub client | 14 | 4xx is **not** retried; `isSourceVerified` fails **closed** |
-| Revoke path | 7 | Reports failure when the API claims success but the allowance survives |
-| Audit trail | 8 | bigint serialisation; a broken subscriber cannot stop the loop |
-| Solidity | 42 | **100% coverage** — lines, statements, branches, functions. The drain **succeeds and takes zero** post-revoke; 5 fuzz suites |
-| **Total** | **86** | |
+| Threat rules | 32 | True-positives, and that a verified/aged/non-deny-listed spender raises **no** threat |
+| Permit2 | 16 | An **expired** allowance is not revoked; `expiration == now` is |
+| KeeperHub client | 34 | 4xx is **not** retried; `isSourceVerified` fails **closed** |
+| Revoke path | 42 | Pending is **not** reported as failed; the escalation ladder; reverts are distinguished from never landing |
+| Watcher | 47 | A re-granted approval **is** caught again; one hostile token cannot blind the scan |
+| Dashboard + server | 84 | The callback is unreachable in demo mode; the replay is not a highlight reel |
+| MCP surface | 49 | `revoke_approval` refuses without explicit `confirm: true` |
+| Audit trail | 11 | bigint serialisation; a detail key cannot clobber the stage |
+| Config, CLI, scripts | 167 | Demo mode cannot execute; seed is idempotent across runs |
+| **TypeScript total** | **522** | **100% coverage** — statements, branches, functions, lines, gated in CI |
+| Solidity | 42 | **100% coverage.** The drain **succeeds and takes zero** post-revoke; 5 fuzz suites |
+| Playwright E2E | 34 | The published site's headline figures must match `BENCHMARK.md`, or CI fails |
+| **Total** | **598** | |
 
 CI runs six jobs behind a gate — quality (lint, types, coverage), security
 (`pnpm audit`, gitleaks over full history, a credential grep that fails the
@@ -407,7 +424,7 @@ served from the same process that does the watching.
 
 ```bash
 pnpm check               # everything CI runs
-pnpm test                # 157 unit tests
+pnpm test                # 522 unit tests
 pnpm contracts:test      # 42 Solidity tests, 100% coverage
 pnpm contracts:coverage  # prove it
 pnpm lint                # eslint
@@ -450,7 +467,7 @@ contracts/
 - [x] Three auditable threat rules
 - [x] Reproducible seed + p50/p95 benchmark
 - [x] Live SSE dashboard
-- [x] CI, security scanning, 233 tests (100% coverage on `src/` and contracts)
+- [x] CI, security scanning, 598 tests (100% coverage on `src/`, `scripts/` and contracts)
 - [ ] Indexer-backed token discovery, removing the watchlist limit
 - [ ] Mainnet with a policy layer — spending caps, daily revoke ceiling, allow-list escape hatch
 

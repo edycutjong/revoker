@@ -15,8 +15,8 @@ An alert that arrives at 3am is an alert nobody reads.
 
 ```mermaid
 flowchart TD
-    A[Approval / ApprovalForAll logs] --> B[watcher.ts]
-    B --> C{3 threat rules}
+    A[ERC-20 Approval logs<br/>Permit2 Approval / Permit / Lockdown logs] --> B[watcher.ts]
+    B --> C{4 threat rules}
     C -->|none fire| D[threat.cleared → keep watching]
     C -->|any fires| E[revoke.ts]
     E --> F[["KeeperHub<br/>POST /api/execute/check-and-execute"]]
