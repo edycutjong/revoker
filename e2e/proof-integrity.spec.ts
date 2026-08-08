@@ -77,7 +77,17 @@ test.describe('landing page tells one story', () => {
   test('the demo video is published, not a placeholder', async ({ page }) => {
     await expect(page.locator('.video-placeholder')).toHaveCount(0)
     const frame = page.locator('#demo iframe')
-    await expect(frame).toHaveAttribute('src', /youtube-nocookie\.com\/embed\/[\w-]{6,}/)
+
+    // Anchored at both ends deliberately. Unanchored, this matched anywhere in
+    // the string, so https://evil.example/?u=youtube-nocookie.com/embed/abcdef
+    // would have satisfied it — the assertion would have passed while the page
+    // embedded someone else's origin. CodeQL flags exactly this shape, and it
+    // was right to: the point of the test is that the embed is the privacy-mode
+    // YouTube host and nothing else.
+    await expect(frame).toHaveAttribute(
+      'src',
+      /^https:\/\/www\.youtube-nocookie\.com\/embed\/[\w-]{6,}$/,
+    )
     await expect(frame).toHaveAttribute('title', /.{10,}/)
   })
 
