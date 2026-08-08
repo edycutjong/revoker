@@ -22,3 +22,12 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      # Same rule as npm above, and for the same reason. A major action bump is
+      # a migration — checkout v4 -> v7 changes runner and input behaviour — and
+      # it lands as one grouped PR touching every workflow at once. Security
+      # patches still arrive via minor/patch; majors are a deliberate, separate
+      # piece of work, not something to take days before a submission freeze.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
