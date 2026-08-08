@@ -14,7 +14,10 @@ audit/
 contracts/lib/
 contracts/coverage.txt
 contracts/lcov.info
-docs/assets/
+# Generated export noise. NOT `docs/assets/` — git cannot re-include a file
+# inside an excluded directory, and the README embeds the b-roll below.
+docs/assets/*
+!docs/assets/*.gif
 
 # E2E and performance harness output
 playwright-report/

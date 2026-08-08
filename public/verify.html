@@ -209,8 +209,17 @@ function render(e) {
       detail += `<br><a href="${explorer}/tx/${esc(e.txHash)}" target="_blank" rel="noopener">${esc(e.txHash)}</a>`
     }
   } else if (e.stage === 'watch.scan') {
-    detail += `block <b>${esc(e.block)}</b> · tokens <b>${esc(e.tokensWatched)}</b> · `
-    detail += `approvals <b>${esc(e.approvalEvents)}</b> · exposures <b>${esc(e.distinctExposures)}</b>`
+    // The two surfaces report different counters: the ERC-20 sweep carries
+    // tokensWatched/approvalEvents, the Permit2 sweep carries permit2Events and
+    // no token list at all. Printing both unconditionally rendered a literal
+    // "tokens undefined · approvals undefined" on every Permit2 row.
+    detail += `block <b>${esc(e.block)}</b> · `
+    if (e.surface === 'permit2') {
+      detail += `surface <b>permit2</b> · events <b>${esc(e.permit2Events)}</b> · `
+    } else {
+      detail += `tokens <b>${esc(e.tokensWatched)}</b> · approvals <b>${esc(e.approvalEvents)}</b> · `
+    }
+    detail += `exposures <b>${esc(e.distinctExposures)}</b>`
   } else if (FAILURE.has(e.stage)) {
     // watch.error carries the exposure it could not evaluate; a whole-scan
     // failure carries none, which is how the two are told apart.

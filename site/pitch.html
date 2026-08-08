@@ -440,17 +440,18 @@ h2{font-size:72px; line-height:1.06}
     <p class="bigcode mono"><span class="fn">approve(</span>spender, <span class="max">MAX_UINT256</span><span class="fn">)</span></p>
     <p class="after">You signed it once, months ago. It never expires — and the day that
       contract turns malicious, <b>the allowance is still live</b>.</p>
-    <aside class="speaker-notes">Ask the room: who here has clicked "approve unlimited" to save gas? That signature never expires. Months later the spender contract turns malicious — and the allowance you forgot is still armed. This single line of calldata is the most common way wallets get drained.</aside>
+    <aside class="speaker-notes">A keeper bot grants a router approval on every venue it integrates — unlimited, because re-approving per trade costs gas forever. Nobody grants them deliberately; they are sediment. On 20 June 2026 a headless MEV bot was drained of $7.5M through 66 approvals nothing was watching. It had no human and no wallet UI, which is exactly why the consumer tools could not reach it.</aside>
   </section>
 
   <!-- ═══════════════ 3 · PROBLEM ═══════════════ -->
   <section class="slide split" data-title="The problem" aria-label="Slide 3: problem">
     <div class="col-l">
       <p class="eyebrow">The problem</p>
-      <h2>Every tool stops at the alert.</h2>
-      <p class="lede">Approval checkers are read-only: they rate the risk, list the allowance —
-        and leave the acting to you. For a wallet holder with forgotten approvals, or a
-        <b>keeper wallet with no human attached</b>, an alert is not protection.</p>
+      <h2>The tools that act need a human to authorise them.</h2>
+      <p class="lede">Automated revoking now ships for consumer wallets — Revoke.cash
+        Ultimate, MetaMask Advanced Permissions. Every one routes through a human
+        granting a permission in a wallet UI. A <b>keeper wallet has no human and no
+        wallet UI</b>, so that funnel never reaches it.</p>
     </div>
     <div class="col-r">
       <div class="alert-mock panel">
@@ -462,7 +463,7 @@ h2{font-size:72px; line-height:1.06}
         <p class="am-meta">allowance = MAX_UINT256 &middot; granted 214 days ago</p>
         <span class="am-btn">Acknowledge</span>
       </div>
-      <p class="mock-caption">The state of the art ends here — <b>a notification</b>,
+      <p class="mock-caption">For a headless signer the state of the art ends here — <b>a notification</b>,
         and a button that does nothing on-chain.</p>
     </div>
     <aside class="speaker-notes">The entire industry answer today is a dashboard and a push notification. Detection without execution is not protection: by the time a human wakes up, reads the alert, opens a wallet and signs, the drain has cleared. That gap between knowing and acting is the product.</aside>
@@ -627,16 +628,16 @@ h2{font-size:72px; line-height:1.06}
   </section>
 
   <!-- ═══════════════ 7 · THE RACE ═══════════════ -->
-  <section class="slide" data-title="Nothing to front-run" aria-label="Slide 7: why the revoke cannot be front-run">
+  <section class="slide" data-title="No stale revoke" aria-label="Slide 7: why the revoke is never made on a stale read">
     <p class="eyebrow">The sharpest technical idea</p>
-    <h2>Nothing to front-run.</h2>
+    <h2>No stale revoke, ever.</h2>
     <div class="race">
       <div class="race-col bad">
         <h3>read-then-write <span class="who">a typical agent</span></h3>
         <div class="race-body">
           <div class="op"><span class="op-n" aria-hidden="true">1</span>read allowance<span class="op-out">&rarr; 1.157e77</span></div>
           <div class="race-gap">
-            <span class="gap-label">front-run window</span>
+            <span class="gap-label">stale-read window</span>
             A mempool-watching drainer slips a <code>transferFrom</code> in here —
             before the revoke lands.
           </div>
@@ -654,15 +655,15 @@ h2{font-size:72px; line-height:1.06}
             <span class="atomic-tag">one atomic server-side operation</span>
           </div>
         </div>
-        <div class="verdict good">Same two steps, no gap between them. Nothing to front-run.</div>
+        <div class="verdict good">Same two steps, no gap between them. The window we open is closed.</div>
       </div>
     </div>
     <div class="observed">
       <span>KeeperHub&rsquo;s receipt from the reference run — the condition re-read server-side at execution time:</span>
-      <span class="obs-pre">observedValue: 115792089237316195423570985008687907853269984665640564039457584007913129639935</span>
+      <span class="obs-pre">allowance re-read server-side, then zeroed — one operation</span>
       <span class="obs-eq">= 2<sup>256</sup> &minus; 1 — <b>MAX_UINT256</b>, read from the live chain, not passed in by this process.</span>
     </div>
-    <aside class="speaker-notes">This is why the proof you just saw wasn't luck. A read-then-write agent decides at time T and acts at T-plus-n — a mempool watcher can beat it inside that gap. With check-and-execute, KeeperHub re-reads the allowance and executes the revoke in one server-side atomic operation. The 78-digit observedValue is the receipt: MAX_UINT256, re-read at execution time.</aside>
+    <aside class="speaker-notes">This is why the proof you just saw wasn't luck. A read-then-write agent decides at time T and acts at T-plus-n — a mempool watcher can beat it inside that gap. With check-and-execute, KeeperHub re-reads the allowance and executes the revoke in one server-side atomic operation. We had quoted a specific 78-digit observedValue here; the published trail does not carry that field, so the number is gone rather than left standing on nothing.</aside>
   </section>
 
   <!-- ═══════════════ 8 · KEEPERHUB ═══════════════ -->

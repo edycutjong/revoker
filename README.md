@@ -51,6 +51,11 @@ pnpm install
 pnpm demo:verify     # opens the real /verify dashboard at localhost:3000/verify
 ```
 
+<div align="center">
+  <img src="docs/assets/verify-dashboard.gif" alt="The /verify dashboard replaying a recorded Sepolia run: scans accumulate, a threat is detected with the rules that fired and their evidence, a revoke is submitted through check-and-execute, and it confirms with the allowance at zero" width="100%">
+  <p><em>The real dashboard, replaying real recorded rows. Every hash links to Sepolia.</em></p>
+</div>
+
 `make demo-verify` is the same thing if you prefer Make; `make help` lists every
 target. If port 3000 is busy the server **refuses to start** rather than quietly
 moving — the instruction above would otherwise be wrong, and the likeliest thing
@@ -318,6 +323,11 @@ slot without the token contract being touched, so the token emits nothing at
 all — no `Approval` event, no change to its own allowance mapping. Every
 approval watcher built on ERC-20 `Approval` logs, including this one until
 recently, is structurally blind to it.
+
+We are not first to revoke via `lockdown()` and do not claim to be — Revoke.cash
+requests `permit2Lockdown` in its auto-revoke permission, and MetaMask's deployed
+`ApprovalRevocationEnforcer` reserves a terms bit for it. What is unusual here is
+doing it unattended, from a server-side signer with no wallet UI in the loop.
 
 | # | Step | Block | Transaction |
 |---|---|---|---|
@@ -740,7 +750,7 @@ low-latency path has to use.
 | **exposure** — threat live → revoke confirmed | **13.71s** | 25.55s | 9.72s | 26.71s |
 
 25/25 cycles succeeded. Gas per revoke was 46,482 at both p50 and p95 (range
-46,458–46,482 across the run), sponsored in every cycle. Two figures rather than
+46,470–46,482 across the run), sponsored in every cycle. Two figures rather than
 one because conflating the agent's own speed with the wallet's real exposure
 window would flatter the result. The Permit2 `lockdown()` reference run landed
 in **16.2s** at **52,213 gas**.

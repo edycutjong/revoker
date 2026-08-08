@@ -752,7 +752,7 @@ td.hot{color:var(--text); font-weight:700}
     <div class="container">
       <div class="sec-head">
         <p class="eyebrow">The technical differentiator</p>
-        <h2 id="how-h">A revoke that can't be front-run.</h2>
+        <h2 id="how-h">No stale revoke, ever.</h2>
         <p class="lede">Most agents read state, decide, then write. That gap between deciding and
           acting is exactly what a mempool-watching drainer needs.</p>
       </div>
@@ -763,7 +763,7 @@ td.hot{color:var(--text); font-weight:700}
           <div class="race-body">
             <div class="op"><span class="op-n" aria-hidden="true">1</span>read allowance<span class="op-out">&rarr; 1.157e77</span></div>
             <div class="race-gap">
-              <span class="gap-label">front-run window</span>
+              <span class="gap-label">stale-read window</span>
               The drainer sees the pending revoke in the mempool and slips a
               <code>transferFrom</code> in here — before the revoke lands.
             </div>
@@ -782,14 +782,14 @@ td.hot{color:var(--text); font-weight:700}
               <span class="atomic-tag">one atomic server-side operation</span>
             </div>
           </div>
-          <div class="verdict good">Same two steps, no gap between them. Nothing to front-run.</div>
+          <div class="verdict good">Same two steps, no gap between them. The window we open is closed; the mempool window is not ours to close.</div>
         </div>
       </div>
 
       <div class="observed">
         <p>The condition is evaluated against the live chain, not a value this process passed in.
         On the reference run KeeperHub reported, at execution time:</p>
-        <pre>observedValue: 115792089237316195423570985008687907853269984665640564039457584007913129639935</pre>
+        <pre>condition re-read server-side at execution time, then executed in the same operation</pre>
         <span class="obs-eq">= 2<sup>256</sup> &minus; 1 &mdash; the MAX_UINT256 allowance, re-read server-side.</span>
       </div>
 

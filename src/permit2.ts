@@ -11,11 +11,14 @@ import { config } from './config.js'
  * uint48 nonce)`. A signature-based grant (`permit`) writes that slot without
  * the token contract being touched, so the token emits NOTHING — no
  * `Approval(owner, spender, value)`, no state change in the token's own
- * allowance mapping. An approval watcher built only on ERC-20 `Approval` logs,
- * which is every automated revoker we could find including this one until now,
- * is structurally blind to it. Permit/Permit2 abuse accounted for 38% of losses
- * in 2025 incidents over $1M — the single largest slice of modern approval
- * risk. That blind spot is not a corner case; it is where the money went.
+ * allowance mapping. An approval watcher built only on ERC-20 `Approval` logs —
+ * which is what this agent was until now — is structurally blind to it.
+ *
+ * We are NOT first here and should not imply it: Revoke.cash has surfaced Permit2
+ * allowances since 2024 and its auto-revoke requests `permit2Lockdown`, and
+ * MetaMask's deployed ApprovalRevocationEnforcer reserves a terms bit for
+ * Permit2 `lockdown()`. What is unusual is doing it from a headless server-side
+ * signer with no human in the loop, which is the whole positioning of this agent.
  *
  * The detection consequence, and the reason this is not a two-line addition to
  * chain.ts: Permit2's events are emitted FROM THE PERMIT2 CONTRACT, not from
