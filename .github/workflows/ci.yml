@@ -142,10 +142,78 @@ jobs:
   # `pnpm bench`) is deliberately NOT run here. It needs a funded wallet and an
   # organisation API key, and running it on every PR would spend real gas and
   # leak credentials into CI. It is reproduced manually — see DEMO.md.
+  e2e:
+    name: E2E — pages · responsive
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Only chromium. These specs assert content and layout, not engine
+      # differences, so the other two browsers would triple install time to
+      # re-prove the same thing.
+      - name: Install browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run E2E
+        run: pnpm e2e
+
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+  perf:
+    name: Perf — Lighthouse budgets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Asserts the accessibility and SEO budgets in lighthouserc.json. The
+      # a11y audits are hard errors rather than warnings: this gate exists
+      # because a link-contrast regression and a dimmed HUD element both shipped
+      # unnoticed, and both are exactly what these audits catch.
+      - name: Lighthouse
+        run: pnpm lighthouse
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse
+          path: .lighthouseci/
+          retention-days: 7
+
   gate:
     name: Ready to ship
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [quality, security, contracts]
+    needs: [quality, security, contracts, e2e, perf]
     steps:
       - run: echo "quality, security and contract suites all green"

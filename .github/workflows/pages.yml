@@ -6,6 +6,14 @@ on:
     paths:
       - 'site/**'
       - '.github/workflows/pages.yml'
+  # Redeploy after a release, so the version badge in the footer and on the deck
+  # matches the tag that was just cut. A release bumps package.json and
+  # CHANGELOG.md but never touches site/, so the push filter above will not fire
+  # for it — without this hook the published pages keep showing the previous
+  # version until the next unrelated site change.
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
 
 # Only one deploy at a time; a queued run supersedes an older one rather than
@@ -24,11 +32,18 @@ jobs:
     name: Deploy site/
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Pages on the free tier requires a public repository. While this is private
-    # the deploy would fail with a permissions error that means nothing except
-    # "not public yet" — skip instead, and this starts working by itself on the
-    # flip. Same pattern as the CodeQL workflow.
-    if: github.event.repository.private != true
+    # Two guards:
+    #   · Pages on the free tier requires a public repository. While this is
+    #     private the deploy would fail with a permissions error that means
+    #     nothing except "not public yet" — skip instead, and this starts
+    #     working by itself on the flip. Same pattern as the CodeQL workflow.
+    #   · workflow_run fires on `completed`, which includes failure. Deploying
+    #     off a failed release would publish a version stamp for a tag that was
+    #     never cut, so require success when that is what triggered us.
+    if: >-
+      github.event.repository.private != true &&
+      (github.event_name != 'workflow_run' ||
+       github.event.workflow_run.conclusion == 'success')
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -37,6 +52,29 @@ jobs:
 
       - name: Verify the site is self-contained
         run: bash scripts/check-site-selfcontained.sh
+
+      # package.json is the single source of truth for the version — it is what
+      # release-please bumps. Stamping at deploy time means the published pages
+      # can never disagree with the released tag, and no commit is needed just
+      # to move a version string.
+      - name: Stamp the released version into the pages
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "stamping v$VERSION"
+          python3 - "$VERSION" <<'PY'
+          import re, sys, pathlib
+          version = sys.argv[1]
+          for f in ['site/index.html', 'site/pitch.html']:
+              p = pathlib.Path(f)
+              t = p.read_text()
+              t, n = re.subn(r'<!--VERSION-->.*?<!--/VERSION-->',
+                             f'<!--VERSION-->{version}<!--/VERSION-->', t)
+              if n == 0:
+                  raise SystemExit(f'{f}: version markers missing — the badge would '
+                                   f'silently keep a stale number, so fail instead')
+              p.write_text(t)
+              print(f'  {f}: {n} stamped')
+          PY
 
       - uses: actions/configure-pages@v5
 
