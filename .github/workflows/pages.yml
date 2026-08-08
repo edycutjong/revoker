@@ -53,13 +53,27 @@ jobs:
       - name: Verify the site is self-contained
         run: bash scripts/check-site-selfcontained.sh
 
-      # package.json is the single source of truth for the version — it is what
-      # release-please bumps. Stamping at deploy time means the published pages
-      # can never disagree with the released tag, and no commit is needed just
-      # to move a version string.
+      # Stamp the RELEASED tag, not package.json.
+      #
+      # These two disagree for a window on every release. release-please merges
+      # its version PR with GITHUB_TOKEN, and GitHub raises no workflow event for
+      # a GITHUB_TOKEN push (recursion guard) — so package.json moves to the new
+      # version immediately, while the tag is only cut on the next run. Stamping
+      # package.json therefore published a badge advertising 1.5.0 while the
+      # badge's own link, /releases/latest, still resolved to v1.4.1.
+      #
+      # The badge links to the release, so it should name the release. Falls back
+      # to package.json only if no release exists yet.
       - name: Stamp the released version into the pages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=$(node -p "require('./package.json').version")
+          VERSION=$(gh release view --repo "${{ github.repository }}" \
+                      --json tagName -q '.tagName' 2>/dev/null | sed 's/^v//') || true
+          if [ -z "$VERSION" ]; then
+            VERSION=$(node -p "require('./package.json').version")
+            echo "no release found — falling back to package.json"
+          fi
           echo "stamping v$VERSION"
           python3 - "$VERSION" <<'PY'
           import re, sys, pathlib
