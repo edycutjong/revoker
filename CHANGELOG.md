@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.2](https://github.com/edycutjong/revoker/compare/v1.5.1...v1.5.2) (2026-08-08)
+
+
+### Fixes
+
+* correct a false capability claim and five defects found by judge audit ([#24](https://github.com/edycutjong/revoker/issues/24)) ([4dfa462](https://github.com/edycutjong/revoker/commit/4dfa462b175d50d5914a0f0144f624659456327b))
+
 ## [1.5.1](https://github.com/edycutjong/revoker/compare/v1.5.0...v1.5.1) (2026-08-08)
 
 
