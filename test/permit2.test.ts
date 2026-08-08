@@ -22,10 +22,53 @@ vi.mock('viem', async (importOriginal) => {
   return { ...actual, createPublicClient: vi.fn(() => client) }
 })
 
+/**
+ * deployments.json is served from memory. Any other path forwards to the real
+ * readFileSync, so mocking the one file the guard lookup reads cannot break
+ * anything else that happens to touch the filesystem.
+ */
+const fsState = vi.hoisted(() => ({ deployments: '', throwNonError: false }))
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...actual,
+    readFileSync: (path: Parameters<typeof actual.readFileSync>[0], enc?: BufferEncoding) => {
+      if (String(path).includes('deployments.json')) {
+        // Not every failure arrives as an Error. A custom fs layer or a native
+        // binding can reject with a bare string, and the message this lookup
+        // produces has to stay readable when it does.
+        // Throwing a bare string is the whole point of this branch — the lookup
+        // must stay readable when something below it does not throw an Error.
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        if (fsState.throwNonError) throw 'disk on fire'
+        if (fsState.deployments === '') {
+          throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' })
+        }
+        return fsState.deployments
+      }
+      return actual.readFileSync(path, enc)
+    },
+  }
+})
+
+/**
+ * Pinned rather than inherited: `config.network` selects which section of
+ * deployments.json the guard address is read from, and a developer with
+ * KH_NETWORK exported would otherwise get different assertions than CI.
+ */
+vi.mock('../src/config.js', () => ({
+  config: { network: 'sepolia', rpcUrl: 'http://rpc.invalid' },
+}))
+
 const {
   PERMIT2_ADDRESS,
   PERMIT2_ABI,
   PERMIT2_ABI_JSON,
+  PERMIT2_ALLOWANCE_VIEW_ABI,
+  PERMIT2_ALLOWANCE_VIEW_ABI_JSON,
+  PERMIT2_ALLOWANCE_VIEW_NAME,
+  PERMIT2_GUARD_FUNCTION,
+  permit2AllowanceViewAddress,
   PERMIT2_APPROVAL_EVENT,
   PERMIT2_PERMIT_EVENT,
   PERMIT2_LOCKDOWN_EVENT,
@@ -227,5 +270,153 @@ describe('permit2Status — live, expired, or nothing there', () => {
     // mean "never written" — and reporting that as an expired grant would put
     // a phantom exposure in every report.
     expect(permit2Status({ amount: 0n, expiration: 0, nonce: 0 }, NOW)).toBe('empty')
+  })
+})
+
+/**
+ * ── The guard helper ─────────────────────────────────────────────────────────
+ *
+ * Permit2's `allowance()` returns three values, and KeeperHub's
+ * check-and-execute condition is only `{operator, value}` — no output index, no
+ * tuple path. Guarding on it therefore compares nothing: the API reports
+ * `observedValue: undefined`, scores `gt 0` as false and skips the write, which
+ * is what left a real armed Sepolia grant in place while the log said the slot
+ * was already zero. These tests pin the replacement: a single-value read, and a
+ * lookup that refuses rather than degrades when the helper is not deployed.
+ */
+describe('the guard helper ABI', () => {
+  const VIEW = '0x1234567890AbcdEF1234567890aBcdef12345678'
+
+  function deploymentsWith(contracts: unknown, network = 'sepolia'): string {
+    return JSON.stringify({ [network]: { chainId: 11155111, contracts } })
+  }
+
+  beforeEach(() => {
+    fsState.deployments = deploymentsWith({ [PERMIT2_ALLOWANCE_VIEW_NAME]: { address: VIEW } })
+  })
+
+  it('names a guard function that actually exists in the ABI', () => {
+    const names = PERMIT2_ALLOWANCE_VIEW_ABI.map((entry) => entry.name)
+    expect(names).toContain(PERMIT2_GUARD_FUNCTION)
+  })
+
+  it('guards on liveAmountOf, which returns exactly ONE value', () => {
+    // The entire bug in one assertion. A guard whose read returns more than one
+    // value gives the condition evaluator nothing to compare, and the revoke is
+    // skipped silently. If this ever returns a tuple again, the Permit2 path is
+    // broken in exactly the way it was broken on chain.
+    const guard = PERMIT2_ALLOWANCE_VIEW_ABI.find((e) => e.name === PERMIT2_GUARD_FUNCTION)!
+    expect(guard.outputs).toHaveLength(1)
+    expect(guard.outputs[0].type).toBe('uint160')
+    expect(guard.stateMutability).toBe('view')
+
+    // ...and for contrast, the getter it replaced. This is the shape that failed.
+    const permit2Allowance = PERMIT2_ABI.find((e) => e.name === 'allowance')!
+    expect(permit2Allowance.outputs.length).toBeGreaterThan(1)
+  })
+
+  it('takes the whole (owner, token, spender) triple, in that order', () => {
+    // The same order revoke.ts passes and the same order the Solidity takes.
+    // A transposed pair would read a slot nobody granted and always guard zero.
+    const guard = PERMIT2_ALLOWANCE_VIEW_ABI.find((e) => e.name === PERMIT2_GUARD_FUNCTION)!
+    expect(guard.inputs.map((i) => i.name)).toEqual(['owner', 'token', 'spender'])
+    expect(guard.inputs.every((i) => i.type === 'address')).toBe(true)
+  })
+
+  it('also exposes the raw amount read, for telling "expired" from "never granted"', () => {
+    const raw = PERMIT2_ALLOWANCE_VIEW_ABI.find((e) => e.name === 'amountOf')!
+    expect(raw.outputs).toHaveLength(1)
+  })
+
+  it('ships the wire-format ABI as a copy of the typed one, so they cannot drift', () => {
+    expect(PERMIT2_ALLOWANCE_VIEW_ABI_JSON).toEqual([...PERMIT2_ALLOWANCE_VIEW_ABI])
+  })
+})
+
+describe('permit2AllowanceViewAddress', () => {
+  const VIEW = '0x1234567890AbcdEF1234567890aBcdef12345678'
+
+  function deploymentsWith(contracts: unknown, network = 'sepolia'): string {
+    return JSON.stringify({ [network]: { chainId: 11155111, contracts } })
+  }
+
+  it('returns the address recorded for the configured network', () => {
+    fsState.deployments = deploymentsWith({ [PERMIT2_ALLOWANCE_VIEW_NAME]: { address: VIEW } })
+
+    expect(permit2AllowanceViewAddress()).toBe(VIEW)
+  })
+
+  it('re-reads the file on every call, so a deploy needs no agent restart', () => {
+    // Deliberately uncached. An operator who deploys the helper while the
+    // watcher is running should get a working revoke on the next scan, not
+    // after someone notices and restarts the process.
+    fsState.deployments = deploymentsWith({})
+    expect(() => permit2AllowanceViewAddress()).toThrow()
+
+    fsState.deployments = deploymentsWith({ [PERMIT2_ALLOWANCE_VIEW_NAME]: { address: VIEW } })
+    expect(permit2AllowanceViewAddress()).toBe(VIEW)
+  })
+
+  it('throws when deployments.json cannot be read at all', () => {
+    fsState.deployments = ''
+
+    expect(() => permit2AllowanceViewAddress()).toThrow(/Could not read deployments\.json/)
+  })
+
+  it('stringifies a non-Error failure rather than printing [object Object]', () => {
+    fsState.throwNonError = true
+    try {
+      expect(() => permit2AllowanceViewAddress()).toThrow(/disk on fire/)
+      expect(() => permit2AllowanceViewAddress()).toThrow(/pnpm deploy:view/)
+    } finally {
+      fsState.throwNonError = false
+    }
+  })
+
+  it('throws when the file is present but not JSON', () => {
+    fsState.deployments = 'not json at all'
+
+    expect(() => permit2AllowanceViewAddress()).toThrow(/Could not read deployments\.json/)
+  })
+
+  it('throws when the configured network has no section', () => {
+    fsState.deployments = deploymentsWith(
+      { [PERMIT2_ALLOWANCE_VIEW_NAME]: { address: VIEW } },
+      'mainnet',
+    )
+
+    expect(() => permit2AllowanceViewAddress()).toThrow(/no Permit2AllowanceView address/)
+  })
+
+  it('throws when the network section records no contracts', () => {
+    fsState.deployments = JSON.stringify({ sepolia: { chainId: 11155111 } })
+
+    expect(() => permit2AllowanceViewAddress()).toThrow(/no Permit2AllowanceView address/)
+  })
+
+  it('throws when the helper is simply not among the recorded contracts', () => {
+    fsState.deployments = deploymentsWith({ MockUSDC: { address: TOKEN } })
+
+    expect(() => permit2AllowanceViewAddress()).toThrow(/no Permit2AllowanceView address/)
+  })
+
+  it('throws when the recorded address is malformed', () => {
+    // The quiet version of the same catastrophe: a typo'd address makes every
+    // guard read revert, and a guard that cannot return a number never fires.
+    fsState.deployments = deploymentsWith({ [PERMIT2_ALLOWANCE_VIEW_NAME]: { address: '0xnope' } })
+
+    expect(() => permit2AllowanceViewAddress()).toThrow(/not a valid address/)
+  })
+
+  it('always tells the operator what to run, and why there is no fallback', () => {
+    // Every failure here stops the Permit2 revoke dead. The message has to carry
+    // the fix, because the alternative someone will otherwise reach for — drop
+    // the guard and just send the lockdown — is precisely the thing that would
+    // give the TOCTOU window back.
+    for (const broken of ['', 'not json', deploymentsWith({}), deploymentsWith({ [PERMIT2_ALLOWANCE_VIEW_NAME]: { address: 'x' } })]) {
+      fsState.deployments = broken
+      expect(() => permit2AllowanceViewAddress()).toThrow(/pnpm deploy:view/)
+      expect(() => permit2AllowanceViewAddress()).toThrow(/UNGUARDED write/)
+    }
   })
 })

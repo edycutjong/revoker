@@ -16,10 +16,19 @@ import type { KeeperHub as KeeperHubClient } from '../src/keeperhub.js'
  * assertion "zero transactions" means something.
  */
 
-const OWNER = '0x5e2e5fd3ad7fdc9b94482930db8b5f45e439bab7'
-const TOKEN = '0x4facb5fd1682c4449cad42b7590861f7ed5c88cb'
-const SPENDER = '0x8ebf8540ede8e40cd94825c418758d4029d8892e'
-const PERMIT2 = '0x000000000022D473030F116dDEE9F6B43aC78BA3'
+/**
+ * Hoisted, because the `vi.mock('../src/config.js')` factory below closes over
+ * OWNER. `vi.mock` calls are lifted above every `const` in this file, so a plain
+ * top-level binding is in its temporal dead zone whenever a module in the static
+ * import graph reaches config.js first — which is exactly what happened when
+ * src/permit2.ts started importing config directly to resolve the Permit2 guard
+ * helper's address. The failure was a ReferenceError inside a mock factory, a
+ * long way from its cause; hoisting the fixtures makes the ordering irrelevant.
+ */
+const OWNER = vi.hoisted((): `0x${string}` => '0x5e2e5fd3ad7fdc9b94482930db8b5f45e439bab7')
+const TOKEN = vi.hoisted((): `0x${string}` => '0x4facb5fd1682c4449cad42b7590861f7ed5c88cb')
+const SPENDER = vi.hoisted((): `0x${string}` => '0x8ebf8540ede8e40cd94825c418758d4029d8892e')
+const PERMIT2 = vi.hoisted((): `0x${string}` => '0x000000000022D473030F116dDEE9F6B43aC78BA3')
 
 const MAX_UINT256 = (1n << 256n) - 1n
 const MAX_UINT160 = (1n << 160n) - 1n

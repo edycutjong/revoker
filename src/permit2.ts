@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs'
 import { parseAbiItem, type Address } from 'viem'
 import { publicClient } from './chain.js'
+import { config } from './config.js'
 
 /**
  * Permit2 — the approval surface an ERC-20 `Approval` log cannot see.
@@ -104,6 +106,137 @@ export const PERMIT2_ABI = [
  * the ABI viem reads with and the ABI KeeperHub executes with cannot diverge.
  */
 export const PERMIT2_ABI_JSON: unknown[] = [...PERMIT2_ABI]
+
+/**
+ * ── The guard helper, and why the revoke cannot read Permit2 directly ────────
+ *
+ * The Permit2 revoke runs through KeeperHub's `check-and-execute`, which reads a
+ * contract value, compares it, and only then submits the write — one server-side
+ * operation, which is what removes the TOCTOU window this project exists to
+ * close. Its condition schema is exactly `{operator, value}`: no output index,
+ * no tuple path, no member selector (KeeperHub direct-execution API reference,
+ * "Check and Execute" → Condition Operators).
+ *
+ * `PERMIT2_ABI`'s `allowance` returns THREE values. Guarding on it therefore
+ * does not merely read the wrong member — there is no scalar for the evaluator
+ * to compare at all, so it reports `observedValue: undefined`, scores `gt 0` as
+ * false, and skips the write. That failure is silent and reads like success:
+ * observed on Sepolia against a real armed, unlimited, correctly-detected grant,
+ * the run logged `revoke.skipped ... reason=guard slot already zero at execution
+ * time observed=undefined` and left the slot fully armed.
+ *
+ * So a minimal on-chain view flattens the tuple to one `uint160` and the guard
+ * reads THAT, while the action still calls canonical Permit2's `lockdown`. The
+ * read and the write stay inside the same check-and-execute — only which view
+ * function is read changed, never when. See contracts/src/Permit2AllowanceView.sol.
+ */
+const DEPLOYMENTS_PATH = new URL('../deployments.json', import.meta.url)
+
+/** The key this helper's address is recorded under in deployments.json. */
+export const PERMIT2_ALLOWANCE_VIEW_NAME = 'Permit2AllowanceView'
+
+/**
+ * The helper function the guard reads.
+ *
+ * `liveAmountOf`, not `amountOf`: an allowance whose expiration has passed is
+ * not an exposure — Permit2 reverts any transfer against it — so a lockdown
+ * there would spend gas zeroing a number nobody can use. The watcher already
+ * refuses to batch expired slots; guarding on the liveness-folding read makes
+ * the server-side re-read agree with that instead of being laxer than it.
+ */
+export const PERMIT2_GUARD_FUNCTION = 'liveAmountOf'
+
+/**
+ * The helper's interface. Both functions are sent so the ABI KeeperHub executes
+ * with is the contract's real shape, not a one-entry excerpt of it that a future
+ * `functionName` change would silently invalidate.
+ */
+export const PERMIT2_ALLOWANCE_VIEW_ABI = [
+  {
+    inputs: [
+      { name: 'owner', type: 'address' },
+      { name: 'token', type: 'address' },
+      { name: 'spender', type: 'address' },
+    ],
+    name: 'amountOf',
+    outputs: [{ name: '', type: 'uint160' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { name: 'owner', type: 'address' },
+      { name: 'token', type: 'address' },
+      { name: 'spender', type: 'address' },
+    ],
+    name: 'liveAmountOf',
+    outputs: [{ name: '', type: 'uint160' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+] as const
+
+/** The same ABI in the plain-array shape KeeperHub's wire format wants. */
+export const PERMIT2_ALLOWANCE_VIEW_ABI_JSON: unknown[] = [...PERMIT2_ALLOWANCE_VIEW_ABI]
+
+interface DeploymentsFile {
+  [network: string]:
+    | { contracts?: Record<string, { address?: string } | undefined> | undefined }
+    | undefined
+}
+
+/** What an operator has to do about it, said the same way wherever it is raised. */
+export const PERMIT2_VIEW_MISSING_HINT =
+  `The Permit2 revoke guard reads ${PERMIT2_ALLOWANCE_VIEW_NAME}.${PERMIT2_GUARD_FUNCTION}(), ` +
+  'because Permit2\'s own allowance() returns a 3-tuple and check-and-execute cannot ' +
+  'select a member from it. Deploy the helper with `pnpm deploy:view` and re-run. ' +
+  'Submitting the lockdown without it would be an UNGUARDED write.'
+
+/**
+ * The deployed helper's address, resolved fresh from deployments.json.
+ *
+ * Deliberately a function called at revoke time rather than a module constant.
+ * Two reasons, both load-bearing: a missing entry must take down ONLY the
+ * Permit2 revoke path — resolving at import time would throw while the module
+ * graph loads and blind the ERC-20 watcher too — and an operator who deploys
+ * the helper gets it picked up without restarting the agent.
+ *
+ * It throws rather than returning undefined so that no caller can accidentally
+ * treat "not deployed" as "guard not needed". A guardless lockdown would land,
+ * and would trade away the single property this project sells.
+ */
+export function permit2AllowanceViewAddress(): Address {
+  let deployments: DeploymentsFile
+  try {
+    deployments = JSON.parse(readFileSync(DEPLOYMENTS_PATH, 'utf8')) as DeploymentsFile
+  } catch (error) {
+    throw new Error(
+      `Could not read deployments.json (${error instanceof Error ? error.message : String(error)}). ` +
+        PERMIT2_VIEW_MISSING_HINT,
+      { cause: error },
+    )
+  }
+
+  const address = deployments[config.network]?.contracts?.[PERMIT2_ALLOWANCE_VIEW_NAME]?.address
+  if (address === undefined) {
+    throw new Error(
+      `deployments.json records no ${PERMIT2_ALLOWANCE_VIEW_NAME} address for network ` +
+        `"${config.network}". ${PERMIT2_VIEW_MISSING_HINT}`,
+    )
+  }
+
+  // A typo'd address is the quiet version of the same catastrophe: the call
+  // would revert or, worse, hit an unrelated contract, and a guard that cannot
+  // return a number is a guard that never fires.
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+    throw new Error(
+      `deployments.json records ${PERMIT2_ALLOWANCE_VIEW_NAME} as "${address}", ` +
+        `which is not a valid address. ${PERMIT2_VIEW_MISSING_HINT}`,
+    )
+  }
+
+  return address as Address
+}
 
 /**
  * Permit2's own events. All three are emitted by the Permit2 contract.

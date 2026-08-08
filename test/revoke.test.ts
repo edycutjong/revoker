@@ -7,18 +7,26 @@ vi.mock('../src/chain.js', async () => {
   return { ...actual, readAllowance: vi.fn() }
 })
 
-// Only the network edge is replaced. PERMIT2_ADDRESS and PERMIT2_ABI_JSON stay
-// real, so the assertions below compare the actual address and the actual ABI
-// this module puts on the wire — a wrong lockdown signature fails here.
+// Only the two edges that leave the process are replaced — the network read and
+// the deployments.json lookup. PERMIT2_ADDRESS, PERMIT2_ABI_JSON,
+// PERMIT2_GUARD_FUNCTION and the helper ABI all stay real, so the assertions
+// below compare the actual address, the actual function name and the actual ABI
+// this module puts on the wire. A wrong lockdown signature fails here, and so
+// does a guard pointed back at Permit2's tuple getter.
 vi.mock('../src/permit2.js', async () => {
   const actual = await vi.importActual<typeof import('../src/permit2.js')>('../src/permit2.js')
-  return { ...actual, readPermit2Allowance: vi.fn() }
+  return { ...actual, readPermit2Allowance: vi.fn(), permit2AllowanceViewAddress: vi.fn() }
 })
 
 const { readAllowance } = await import('../src/chain.js')
-const { readPermit2Allowance, PERMIT2_ADDRESS, PERMIT2_ABI_JSON } = await import(
-  '../src/permit2.js'
-)
+const {
+  readPermit2Allowance,
+  permit2AllowanceViewAddress,
+  PERMIT2_ADDRESS,
+  PERMIT2_ABI_JSON,
+  PERMIT2_ALLOWANCE_VIEW_ABI_JSON,
+  PERMIT2_GUARD_FUNCTION,
+} = await import('../src/permit2.js')
 const { revokeApproval, revokePermit2Allowances } = await import('../src/revoke.js')
 import type { Permit2RevokeOutcome, RevokeOutcome } from '../src/revoke.js'
 import type { KeeperHub } from '../src/keeperhub.js'
@@ -26,6 +34,8 @@ import type { KeeperHub } from '../src/keeperhub.js'
 const TOKEN = '0xtoken000000000000000000000000000000000' as Address
 const OWNER = '0xowner000000000000000000000000000000000' as Address
 const SPENDER = '0xspender0000000000000000000000000000000' as Address
+/** Where the deployed Permit2AllowanceView lives, in these tests. */
+const GUARD_VIEW = '0xview00000000000000000000000000000000000' as Address
 
 function fakeKh(overrides: Partial<KeeperHub> = {}): KeeperHub {
   return {
@@ -43,6 +53,10 @@ function fakeKh(overrides: Partial<KeeperHub> = {}): KeeperHub {
 
 beforeEach(() => {
   vi.mocked(readAllowance).mockReset()
+  // The helper is deployed unless a test says otherwise. Not-deployed is its own
+  // scenario, asserted explicitly below, because the required behaviour there is
+  // "refuse and say so" rather than "carry on without a guard".
+  vi.mocked(permit2AllowanceViewAddress).mockReturnValue(GUARD_VIEW)
   process.env['REVOKER_AUDIT_LOG'] = '/dev/null'
 })
 
@@ -717,14 +731,27 @@ describe('revokePermit2Allowances — lockdown() through check-and-execute', () 
       action: { contractAddress: string; functionName: string; functionArgs: unknown[]; abi: unknown }
     }
 
-    // The check reads Permit2's ledger, not the token's: allowance(user, token,
-    // spender) on the Permit2 contract. Reading the token's allowance mapping
-    // here would guard the wrong number entirely.
-    expect(arg.check.contractAddress).toBe(PERMIT2_ADDRESS)
-    expect(arg.check.functionName).toBe('allowance')
+    // The check reads the on-chain helper, NOT Permit2's own getter — and that
+    // is the whole fix. `Permit2.allowance` returns (uint160,uint48,uint48), and
+    // check-and-execute's condition schema is only {operator, value}: no output
+    // index, no tuple path. Guarding on the tuple gives the evaluator nothing to
+    // compare, so it reports observedValue undefined, scores `gt 0` false, and
+    // SKIPS the write while logging a clean skip. Proved on Sepolia against a
+    // real armed grant. If this assertion is ever "corrected" back to
+    // PERMIT2_ADDRESS/'allowance', the Permit2 revoke silently stops working.
+    expect(arg.check.contractAddress).toBe(GUARD_VIEW)
+    expect(arg.check.contractAddress).not.toBe(PERMIT2_ADDRESS)
+    expect(arg.check.functionName).toBe(PERMIT2_GUARD_FUNCTION)
+    expect(arg.check.functionName).toBe('liveAmountOf')
     expect(arg.check.functionArgs).toEqual([OWNER, PAIR_A.token, PAIR_A.spender])
-    expect(arg.check.abi).toBe(PERMIT2_ABI_JSON)
+    expect(arg.check.abi).toBe(PERMIT2_ALLOWANCE_VIEW_ABI_JSON)
     expect(arg.condition).toEqual({ operator: 'gt', value: '0' })
+
+    // ...and the guard is still INSIDE the same check-and-execute as the write.
+    // One call, one server-side operation: that is the TOCTOU property, and
+    // splitting the read out into a separate request would end it.
+    expect(checkAndExecute.mock.calls[0]![0]).toHaveProperty('check')
+    expect(checkAndExecute.mock.calls[0]![0]).toHaveProperty('action')
 
     // ONE lockdown call carrying BOTH pairs. This is the batching advantage the
     // ERC-20 path cannot have: two exposures, one base fee, one transaction.
@@ -815,7 +842,86 @@ describe('revokePermit2Allowances — lockdown() through check-and-execute', () 
     expect(outcome.cleared).toEqual([])
     // No confirmation read is warranted when nothing was executed.
     expect(readPermit2Allowance).not.toHaveBeenCalled()
-    expect(stagesOf('revoke.skipped').at(-1)!['reason']).toMatch(/guard slot already zero/)
+    // The wording names BOTH ways the guard can read zero, because liveAmountOf
+    // folds the expiry check in: revoked by someone else, or expired since
+    // detection. Claiming only the first would misreport the second.
+    expect(stagesOf('revoke.skipped').at(-1)!['reason']).toMatch(/guard reads zero at execution time/)
+    expect(stagesOf('revoke.skipped').at(-1)!['reason']).toMatch(/expired/)
+  })
+
+  it('records which contract and function the guard actually read', async () => {
+    // The bug this replaced was invisible in the submit log: the guard looked
+    // fine and evaluated nothing. `guardVia` is what makes the next one visible.
+    slotsAt(0n)
+
+    await revokePermit2Allowances({ kh: fakePermit2Kh(), owner: OWNER, pairs: [PAIR_A] })
+
+    expect(stagesOf('revoke.submit').at(-1)!['guardVia']).toBe(`${GUARD_VIEW}.liveAmountOf`)
+  })
+
+  it('FAILS LOUDLY and submits nothing when the guard helper is not deployed', async () => {
+    // The requirement that outranks landing the revoke. The only alternative to
+    // a guarded lockdown is an unguarded one, and an unguarded write hands back
+    // the exact TOCTOU window this project exists to close. A revoke that does
+    // not happen is a bug an operator can see; a revoke that happens without a
+    // guard is a silent downgrade of the security claim.
+    const checkAndExecute = vi.fn()
+    vi.mocked(permit2AllowanceViewAddress).mockImplementation(() => {
+      throw new Error('deployments.json records no Permit2AllowanceView address for network "sepolia"')
+    })
+
+    const outcome = await revokePermit2Allowances({
+      kh: fakeKh({ checkAndExecute }),
+      owner: OWNER,
+      pairs: [PAIR_A, PAIR_B],
+    })
+
+    expect(checkAndExecute).not.toHaveBeenCalled()
+    expect(outcome.executed).toBe(false)
+    expect(outcome.disposition).toBe('failed')
+    expect(outcome.cleared).toEqual([])
+    // The batch is reported back in full, so the watcher marks nothing handled
+    // and retries every pair once a human deploys the helper.
+    expect(outcome.pairs).toEqual([PAIR_A, PAIR_B])
+    expect(outcome.error).toMatch(/no Permit2AllowanceView address/)
+
+    const failed = stagesOf('revoke.failed').at(-1)!
+    expect(failed['reason']).toMatch(/refusing to submit an unguarded lockdown/)
+    expect(failed['terminal']).toBe(true)
+    expect(failed['pairs']).toBe(2)
+  })
+
+  it('reports a non-Error thrown by the helper lookup without losing it', async () => {
+    const checkAndExecute = vi.fn()
+    vi.mocked(permit2AllowanceViewAddress).mockImplementation(() => {
+      // A bare string, deliberately: this asserts the message survives when
+      // whatever failed underneath did not throw an Error.
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      throw 'deployments.json unreadable'
+    })
+
+    const outcome = await revokePermit2Allowances({
+      kh: fakeKh({ checkAndExecute }),
+      owner: OWNER,
+      pairs: [PAIR_A],
+    })
+
+    expect(checkAndExecute).not.toHaveBeenCalled()
+    expect(outcome.error).toBe('deployments.json unreadable')
+    expect(outcome.disposition).toBe('failed')
+  })
+
+  it('says nothing about a missing helper for an empty batch', async () => {
+    // Emptiness is checked first: there is no revoke to refuse, so an undeployed
+    // helper is not an error worth raising on a scan that found no exposure.
+    vi.mocked(permit2AllowanceViewAddress).mockImplementation(() => {
+      throw new Error('not deployed')
+    })
+
+    const outcome = await revokePermit2Allowances({ kh: fakeKh(), owner: OWNER, pairs: [] })
+
+    expect(outcome.disposition).toBeUndefined()
+    expect(stagesOf('revoke.skipped').at(-1)!['reason']).toBe('empty batch')
   })
 
   it('omits observedAllowance from a skip that carried no condition', async () => {

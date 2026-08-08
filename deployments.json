@@ -12,6 +12,11 @@
         "address": "0x8eBf8540EdE8e40CD94825C418758d4029D8892e",
         "deployTx": "0x7eb8303e5a99c5f56ca34da480ef4759cfe4ad2f07964447621ca4c0ef209c1c",
         "note": "Demonstration drain target. Owner-gated; inert once its approval is revoked."
+      },
+      "Permit2AllowanceView": {
+        "address": "0x252e03162936563e345e616fa60e0f33831b67db",
+        "deployTx": "0x04fe33e1c0f69b59ce4653c5bc020044845add5010ed94816515f9148b0e8b80",
+        "note": "Guard read for the Permit2 revoke. Flattens Permit2 allowance() (uint160,uint48,uint48) to one uint160, because check-and-execute's condition cannot select a tuple member. Ownerless, stateless, immutable, pure pass-through."
       }
     },
     "watchedWallet": {

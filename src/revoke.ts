@@ -5,6 +5,9 @@ import { explorerTxUrl, sleep, type ExecutionStatus, type KeeperHub } from './ke
 import {
   PERMIT2_ABI_JSON,
   PERMIT2_ADDRESS,
+  PERMIT2_ALLOWANCE_VIEW_ABI_JSON,
+  PERMIT2_GUARD_FUNCTION,
+  permit2AllowanceViewAddress,
   readPermit2Allowance,
   type Permit2Pair,
 } from './permit2.js'
@@ -436,9 +439,9 @@ export async function revokeApproval(input: {
  * The guard is the part that matters, and it is deliberately identical in kind
  * to the ERC-20 path — the TOCTOU-free property is the project's core claim and
  * a second, looser write path would quietly retire it. The allowance read and
- * the lockdown are one server-side operation: KeeperHub re-reads
- * `allowance(owner, token, spender)` and only then submits, so there is no
- * window between deciding and acting for a drainer watching the mempool.
+ * the lockdown are one server-side operation: KeeperHub re-reads the live
+ * exposure and only then submits, so there is no window between deciding and
+ * acting for a drainer watching the mempool.
  *
  * Two honest consequences of batching a single-slot guard:
  *
@@ -453,14 +456,39 @@ export async function revokeApproval(input: {
  *      resubmission that loses the race finds the guard slot at zero, the
  *      condition fails, and nothing is submitted at all.
  *
- * ABI note, because this is the one assumption here that cannot be proved
- * without a live key: Permit2's `allowance` getter returns a THREE-value tuple
- * `(uint160 amount, uint48 expiration, uint48 nonce)`, and the condition is
- * evaluated against the first of them. The full canonical signature is sent —
- * truncating the outputs to make the shape simpler would be inventing a
- * function that does not exist — and the value the server actually compared is
- * echoed back in `condition.observedValue` and recorded on the outcome, so the
- * audit trail proves after the fact which member was read.
+ * ── Why the guard does NOT read Permit2.allowance ────────────────────────────
+ *
+ * This used to point the check straight at Permit2's own
+ * `allowance(owner, token, spender)` and assume the condition would be compared
+ * against the first of its three return values. It is not, and a live Sepolia
+ * run is what proved it: an armed, unlimited, correctly-detected grant produced
+ *
+ *     revoke.skipped method=permit2-lockdown pairs=1
+ *       reason=guard slot already zero at execution time observed=undefined
+ *
+ * and the slot was still armed afterwards, re-read from a public RPC.
+ *
+ * The cause is the API's condition schema, not this call site. KeeperHub's
+ * `check-and-execute` condition is exactly `{operator, value}` — there is no
+ * output index, no tuple path, no member selector anywhere in it. Permit2's
+ * getter returns THREE values `(uint160 amount, uint48 expiration, uint48
+ * nonce)`, so the evaluator has no scalar to compare, reports `observedValue:
+ * undefined`, scores `gt 0` as false, and skips the write. A guard that silently
+ * declines to fire and logs a tidy success is the worst possible shape for this
+ * failure, which is exactly why it took a real transaction to find.
+ *
+ * The fix keeps the property and changes only WHAT is read: a minimal, ownerless,
+ * immutable on-chain view (contracts/src/Permit2AllowanceView.sol) flattens the
+ * tuple to a single `uint160`, and the guard reads that. The action is still
+ * `Permit2.lockdown(...)` at the canonical address, and both still sit inside the
+ * SAME check-and-execute — so the read and the write remain one atomic
+ * server-side operation and the TOCTOU claim is untouched. The helper is a pure
+ * pass-through that reads canonical Permit2 at call time, so it cannot go stale
+ * or disagree with the slot the action zeroes.
+ *
+ * `condition.observedValue` is still recorded on the outcome and in the audit
+ * trail. That field is what made this diagnosable — an `undefined` there is the
+ * signature of a guard reading a shape the API cannot evaluate — so it stays.
  */
 export interface Permit2RevokeOutcome extends RevokeOutcome {
   /** Every slot the lockdown call was asked to zero. */
@@ -493,13 +521,42 @@ export async function revokePermit2Allowances(input: {
     return { executed: false, latencyMs, pairs: [], cleared: [] }
   }
 
+  // Resolve the guard helper BEFORE anything is submitted, and fail loudly if it
+  // is not deployed. There is deliberately no fallback: the only other way to
+  // reach lockdown from here is an unguarded write, and shipping the revoke
+  // without its check-and-execute condition would trade away the exact property
+  // this module exists to provide. A revoke that does not happen is a bug an
+  // operator can see and fix; a revoke that happens without a guard is the
+  // TOCTOU window back, silently.
+  let guardAddress: Address
+  try {
+    guardAddress = permit2AllowanceViewAddress()
+  } catch (error) {
+    const latencyMs = Date.now() - startedAt
+    const message = error instanceof Error ? error.message : String(error)
+    audit('revoke.failed', {
+      owner,
+      action: 'permit2-lockdown',
+      pairs: pairs.length,
+      terminal: true,
+      reason: 'Permit2 guard helper is not deployed — refusing to submit an unguarded lockdown',
+      error: message,
+      latencyMs,
+    })
+    return { executed: false, latencyMs, pairs, cleared: [], disposition: 'failed', error: message }
+  }
+
   const submit = (gasLimitMultiplier: string, idempotencyKey?: string) =>
     kh.checkAndExecute({
       check: {
-        contractAddress: PERMIT2_ADDRESS,
-        functionName: 'allowance',
+        // The helper, NOT Permit2 itself — see the note above. Permit2's
+        // allowance() returns a 3-tuple and this API's condition schema has no
+        // way to select a member from it, so guarding on it evaluates nothing
+        // and skips the write while logging a success.
+        contractAddress: guardAddress,
+        functionName: PERMIT2_GUARD_FUNCTION,
         functionArgs: [owner, guard.token, guard.spender],
-        abi: PERMIT2_ABI_JSON,
+        abi: PERMIT2_ALLOWANCE_VIEW_ABI_JSON,
       },
       condition: { operator: 'gt', value: '0' },
       action: {
@@ -521,6 +578,10 @@ export async function revokePermit2Allowances(input: {
     action: 'permit2-lockdown',
     pairs: pairs.length,
     guard: `${guard.token}:${guard.spender}`,
+    // Which contract and function the server-side condition actually reads.
+    // Recorded because the last bug here was invisible in the submit log: the
+    // guard looked right and evaluated nothing.
+    guardVia: `${guardAddress}.${PERMIT2_GUARD_FUNCTION}`,
     gasLimitMultiplier: FIRST_GAS_LIMIT_MULTIPLIER,
   })
 
@@ -532,7 +593,16 @@ export async function revokePermit2Allowances(input: {
       audit('revoke.skipped', {
         method: 'permit2-lockdown',
         pairs: pairs.length,
-        reason: 'guard slot already zero at execution time — batch rebuilt on the next scan',
+        // Zero now means one of TWO things, and the wording says so rather than
+        // implying only the first: the slot was revoked by someone else, or it
+        // expired between detection and execution. `liveAmountOf` folds the
+        // expiry check in, so an expired grant reads zero and correctly costs
+        // no gas. `observed` distinguishes them after the fact — and an
+        // `undefined` there means the guard evaluated nothing at all, which is
+        // the bug this path was rebuilt to make impossible.
+        reason:
+          'guard reads zero at execution time (revoked elsewhere, or expired) — ' +
+          'batch rebuilt on the next scan',
         observed: result.condition?.observedValue,
         latencyMs,
       })
