@@ -23,6 +23,7 @@ jobs:
   deploy:
     name: Deploy site/
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # Pages on the free tier requires a public repository. While this is private
     # the deploy would fail with a permissions error that means nothing except
     # "not public yet" — skip instead, and this starts working by itself on the

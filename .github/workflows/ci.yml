@@ -18,6 +18,7 @@ jobs:
   quality:
     name: Quality — lint · types · unit tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -52,6 +53,7 @@ jobs:
   security:
     name: Security — dependencies · secrets
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -83,6 +85,7 @@ jobs:
   contracts:
     name: Contracts — build · test · fuzz
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -142,6 +145,7 @@ jobs:
   gate:
     name: Ready to ship
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [quality, security, contracts]
     steps:
       - run: echo "quality, security and contract suites all green"

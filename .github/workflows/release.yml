@@ -13,6 +13,7 @@ jobs:
   release:
     name: Semantic version
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       # release-please derives the next semver from Conventional Commits since
       # the last release, opens a release PR with generated notes, and cuts the
