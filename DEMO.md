@@ -429,13 +429,13 @@ result: `response` (detection → confirmed, the agent's own speed) and `exposur
 ## 10. Tests
 
 ```bash
-pnpm test               # 720 TypeScript tests
+pnpm test               # 724 TypeScript tests
 pnpm contracts:test     # 54 Solidity tests
 pnpm e2e                # 34 Playwright tests
 make submission-check   # placeholders, required links, tracked images
 ```
 
-**808 total.** 100% statements, branches, functions and lines on `src/` **and**
+**812 total.** 100% statements, branches, functions and lines on `src/` **and**
 `scripts/` — gated in `vitest.config.ts`, so CI fails on a regression — plus
 100% Solidity coverage and 6 fuzz suites. CI runs six jobs behind the gate:
 quality, security, contracts, E2E, perf and submission readiness.
