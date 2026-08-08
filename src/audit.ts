@@ -16,7 +16,6 @@ export type AuditStage =
   | 'watch.scan'
   | 'threat.detected'
   | 'threat.cleared'
-  | 'revoke.simulate'
   | 'revoke.submit'
   | 'revoke.confirmed'
   | 'revoke.failed'
@@ -28,7 +27,19 @@ export interface AuditEntry {
   [key: string]: unknown
 }
 
-const LOG_PATH = process.env['REVOKER_AUDIT_LOG'] ?? 'audit/revoker.jsonl'
+/**
+ * Resolved per call, not once at module load.
+ *
+ * Captured at load, the path is fixed before any test can set
+ * REVOKER_AUDIT_LOG in a beforeEach — so the suite appended to the real
+ * audit/revoker.jsonl instead of its temp dir, interleaving ~300 placeholder
+ * rows with genuine on-chain records. The fixtures even reused real gas values,
+ * so the two were indistinguishable by eye in the one artifact whose whole
+ * purpose is being trustworthy after the fact.
+ */
+function logPath(): string {
+  return process.env['REVOKER_AUDIT_LOG'] ?? 'audit/revoker.jsonl'
+}
 
 const subscribers = new Set<(entry: AuditEntry) => void>()
 
@@ -55,8 +66,9 @@ export function audit(stage: AuditStage, detail: Record<string, unknown> = {}): 
   }
 
   try {
-    mkdirSync(dirname(LOG_PATH), { recursive: true })
-    appendFileSync(LOG_PATH, `${JSON.stringify(entry)}\n`)
+    const path = logPath()
+    mkdirSync(dirname(path), { recursive: true })
+    appendFileSync(path, `${JSON.stringify(entry)}\n`)
   } catch {
     // A failed audit write must never take down the agent mid-revoke: losing
     // the log is bad, failing to revoke because of it is worse.
@@ -78,7 +90,6 @@ const STAGE_LABEL: Record<AuditStage, string> = {
   'watch.scan': '·',
   'threat.detected': '🚨',
   'threat.cleared': '✓',
-  'revoke.simulate': '⚙',
   'revoke.submit': '↗',
   'revoke.confirmed': '✅',
   'revoke.failed': '❌',

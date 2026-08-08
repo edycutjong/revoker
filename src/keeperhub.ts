@@ -93,15 +93,39 @@ export class KeeperHub {
 
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.apiKey}`,
+      // Not cosmetic. The edge in front of the API answers some default scripted
+      // user-agents with a bare Cloudflare 403 carrying no JSON body, and on a
+      // bearer-token endpoint that reads as "your key is wrong" — feedback.md
+      // documents the time that cost. starter/quickstart.mjs has always set one;
+      // this client, the one that actually runs unattended, did not.
+      'User-Agent': 'revoker-agent (+https://github.com/edycutjong/revoker)',
     }
     if (init.body !== undefined) headers['Content-Type'] = 'application/json'
     if (init.idempotencyKey) headers['Idempotency-Key'] = init.idempotencyKey
 
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      method: init.method ?? 'GET',
-      headers,
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
-    })
+    // fetch REJECTS on transport failure — DNS, ECONNRESET, TLS — rather than
+    // resolving with a status, so this has to be caught here. Left uncaught it
+    // bypassed the retry policy entirely: a blip that a single retry would have
+    // survived instead killed the request outright, in an agent whose whole
+    // premise is that it is still watching at 3am. Retried on the same schedule
+    // as a 5xx, since it is the same class of problem.
+    let response: Response
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method: init.method ?? 'GET',
+        headers,
+        body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      })
+    } catch (error) {
+      if (attempt < 4) {
+        await new Promise((resolve) => setTimeout(resolve, 2 ** attempt * 500))
+        return this.#request<T>(path, init, attempt + 1)
+      }
+      throw new Error(
+        `KeeperHub ${init.method ?? 'GET'} ${path} unreachable after ${attempt + 1} attempts`,
+        { cause: error },
+      )
+    }
 
     const text = await response.text()
     let parsed: unknown

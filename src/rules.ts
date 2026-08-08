@@ -102,7 +102,7 @@ export const youngSpender: ThreatRule = {
     } catch (error) {
       if (error instanceof HistoricalStateUnavailable) {
         // Report inability to evaluate rather than reporting safety. An
-        // archive RPC (ARCHIVE_RPC_URL) restores this rule; without one it
+        // archive RPC (point SEPOLIA_RPC_URL at one) restores this rule; without one it
         // abstains loudly and the other two rules still stand.
         return {
           rule: this.id,
