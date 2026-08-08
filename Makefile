@@ -1,4 +1,4 @@
-.PHONY: help install check lint typecheck test contracts spike seed arm watch verify bench clean e2e lighthouse security-scan
+.PHONY: help install check lint typecheck test contracts spike seed seed-permit2 arm watch verify bench clean e2e lighthouse security-scan
 
 help:  ## Show this help
 	@grep -E '^[a-z0-9-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -32,6 +32,12 @@ spike:  ## Prove the KeeperHub integration end-to-end (needs credentials)
 
 seed:  ## Arm the threat scenario on Sepolia (idempotent)
 	pnpm seed
+
+# The Permit2 twin of `seed`. Separate target because it arms a different
+# surface: `seed` writes the token's own allowance mapping, this writes Permit2's
+# ledger — the grant an ERC-20 Approval log cannot see. Both are idempotent.
+seed-permit2:  ## Arm the Permit2 allowance on Sepolia (idempotent; --rearm to force)
+	pnpm seed:permit2
 
 # Addresses come from deployments.json so this target never drifts from what the
 # seed actually deployed. Lazy `=`, not `:=`: these shell out to node, and only

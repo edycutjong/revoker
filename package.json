@@ -11,6 +11,7 @@
   "scripts": {
     "spike": "tsx scripts/spike.ts",
     "seed": "tsx scripts/seed.ts",
+    "seed:permit2": "tsx scripts/seed-permit2.ts",
     "watch": "tsx src/index.ts",
     "workflow:deploy": "tsx scripts/deploy-workflow.ts",
     "demo": "REVOKER_DEMO=1 tsx src/index.ts --dry-run --once",
