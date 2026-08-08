@@ -170,7 +170,7 @@
       </g>
       <g class="chip2">
         <rect x="1022" y="224" width="208" height="26" rx="6" fill="#ff5c5c" fill-opacity="0.10" stroke="#ff5c5c" stroke-opacity="0.42"/>
-        <text class="mono" x="1126" y="242" font-size="12.5" font-weight="700" fill="#ff5c5c" text-anchor="middle">young-spender</text>
+        <text class="mono" x="1126" y="242" font-size="12.5" font-weight="700" fill="#ff5c5c" text-anchor="middle">denylisted</text>
       </g>
 
       <!-- allowance wire: whole → severed → healed on reset -->

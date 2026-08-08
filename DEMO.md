@@ -105,7 +105,7 @@ cast call 0x4facb5FD1682c4449cAD42b7590861f7eD5c88Cb \
 🚨 threat.detected   mUSDC  allowance=MAX_UINT256  atRisk=10000000000
                      rules=[unlimited-to-unverified, denylisted]
 ↗  revoke.submit     method=check-and-execute
-✅ revoke.confirmed  0x96028414…  allowanceAfter=0  latencyMs=6909  sponsored=true
+✅ revoke.confirmed  0x96028414…  allowanceAfter=0  sponsored=true
 ```
 
 No manual step happens between detection and revoke. Use `--dry-run` to watch it

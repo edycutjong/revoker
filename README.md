@@ -45,21 +45,26 @@ The industry's answer to this is **read-only**: scanners and trust scores that
 *tell you* an approval is risky. KeeperHub's own marketplace has
 `token-approval-risk-scanner-*` and `wallet-trust-score-*`. None of them **act**.
 
-**What about the tools that do act?** Two exist and are worth naming, because
-"isn't this already solved?" is the fair question:
+**"Isn't this already solved?"** is the fair question, and the honest answer is
+that prior art exists but takes a different shape.
 
-- **Harpie** front-runs the drain transaction itself on mainnet — a closed,
-  commercial service you hand monitoring rights to. Revoker removes the
-  *approval* instead of racing the *transfer*, which is a smaller and more
-  reliable thing to win: no gas auction, no mempool race.
-- **OpenZeppelin Defender** (Sentinel + Autotask) can fire condition-triggered
-  transactions, but it is automation plumbing you assemble yourself, not an
-  approval-threat agent.
+The commercial attempt at automated wallet rescue — Harpie was the best-known,
+and it shut down in March 2025 — worked by **racing the drainer**: watch the
+mempool, and when a malicious `transferFrom` appears, front-run it and sweep the
+assets somewhere safe. That approach has two costs. It is a gas auction you can
+lose, and it requires the user to grant the rescue service its own token
+approval. The anti-drain tool needed the exact primitive that causes the problem.
 
-Revoker is open-source, non-custodial — signing happens in a Turnkey enclave and
-this process never holds a key — and every decision it makes carries its evidence
-into an auditable trail. It is also built on a general execution layer, so the
-same pattern is reusable by any agent that needs to act rather than alert.
+General automation platforms (OpenZeppelin's Defender lineage, now its
+open-source Monitor and Relayer) can fire condition-triggered transactions, but
+they are plumbing you assemble into a product — not an approval-threat agent.
+
+Revoker takes the smaller, more reliable target: **remove the approval instead of
+racing the transfer.** There is no auction to lose and no mempool to win, because
+once the allowance is zero the attack has nothing to execute against. It is
+open-source and non-custodial — signing happens inside a Turnkey enclave and this
+process never holds a key, so you are not handing rescue rights to anyone — and
+every decision carries its evidence into an auditable trail.
 
 ### The Solution
 
@@ -404,7 +409,7 @@ contracts/
 | [BENCHMARK.md](./BENCHMARK.md) | p50/p95 latency over N=25, per-cycle transaction links |
 | [deployments.json](./deployments.json) | Contract addresses and deploy transactions |
 | [.github/SECURITY.md](./.github/SECURITY.md) | Threat model, and what does *not* count as a vulnerability |
-| [feedback.md](./feedback.md) | Zero-to-first-transaction teardown of KeeperHub — 7 verified findings with fixes |
+| [feedback.md](./feedback.md) | Zero-to-first-transaction teardown of KeeperHub — 7 findings with fixes, 5 reproducible from this repo |
 
 ---
 

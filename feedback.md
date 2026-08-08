@@ -1,8 +1,10 @@
 # KeeperHub — a zero-to-first-transaction teardown
 
 Written while building [Revoker](./README.md) for Agents Onchain, by someone who
-had never used KeeperHub before. Seven findings, every one hit in practice and
-re-verified before writing this. Each has a reproduction and a proposed fix.
+had never used KeeperHub before. Seven findings, every one hit in practice. Each
+has a proposed fix, and each says plainly what evidence backs it — five are
+reproducible from this repo, two rest on my own observation and are marked as
+such.
 
 Context for weighting: I got from a fresh API key to a **real Sepolia
 transaction in under an hour**, and to an autonomous agent landing revokes the
@@ -27,10 +29,13 @@ unchanged — verified by `eth_getBalance` before and after, not by trusting the
 API's own report.
 
 ```
-25/25 benchmark cycles: sponsored: true
-signer balance across all of them: 50000000000000000 wei, unchanged
+25/25 benchmark cycles: sponsored: true          (recorded in BENCHMARK.md)
+signer balance before/after the integration spike: 50000000000000000 wei, unchanged
 first observed: 2026-08-08, tx 0x1f95fdd3a519a74ef2e919f272bcc8c89d3e4175efde97bbd536f7e7bcbf3d9d
 ```
+
+(The balance check runs once, in `scripts/spike.ts`. The benchmark records the
+`sponsored` flag on every cycle but does not re-read the balance each time.)
 
 I cut `GuardVault` rather than ship an escrow for a cost that does not exist.
 That was the right call, but I'd built the spec around a documented constraint
@@ -115,7 +120,7 @@ attached asynchronously; poll `/api/execute/{id}/status`."*
 
 | Endpoint | Field |
 |---|---|
-| `POST /api/execute/transfer` (nested `result`) | `gasUsed` |
+| `POST /api/execute/transfer` | `gasUsed` |
 | `GET /api/execute/{id}/status` (top level) | `gasUsedWei` |
 
 I typed the client against the execute-response shape, and every status poll
@@ -224,9 +229,20 @@ saved me checking whether I'd mistyped.
 
 ## Reproductions
 
-Everything above is reproducible from this repo. `pnpm spike` exercises seven
-surfaces end to end and verifies the result against a public RPC rather than
-trusting KeeperHub's own report — see [DEMO.md](./DEMO.md).
+Not all of these are equally reproducible from this repo, so here is exactly
+what backs each one:
 
-Findings #1, #3, #4 and #5 are all observable in a single `pnpm spike` run.
-Finding #2 reproduces with the four-line Python snippet above.
+| # | Backed by |
+|---|---|
+| 1 | `BENCHMARK.md` — `sponsored: true` on 25/25 cycles. The single balance check is in `scripts/spike.ts`. |
+| 2 | **My observation only.** No artifact in this repo; needs a live key to reproduce. |
+| 3 | `src/revoke.ts` — the code polls `/status` for the hash, with a comment saying why. |
+| 4 | `src/keeperhub.ts` — the status response type carries `gasUsedWei` where the execute response carries `gasUsed`. |
+| 5 | **My observation only.** The probe was run by hand and not recorded. |
+| 6 | `src/watcher.ts` + `src/keeperhub.ts` — token discovery falls back to an explicit watchlist because of this. |
+| 7 | Verified live on 2026-08-08 with `curl`. |
+
+`pnpm spike` exercises the integration end to end and verifies its result against
+a public RPC rather than trusting KeeperHub's own report — see
+[DEMO.md](./DEMO.md). Findings #2 and #5 rest on my word; I have flagged them
+rather than dressing them up.
