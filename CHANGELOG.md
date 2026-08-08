@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/edycutjong/revoker/compare/v1.4.0...v1.4.1) (2026-08-08)
+
+
+### Documentation
+
+* **readme:** make the tech badges link to what they name ([#18](https://github.com/edycutjong/revoker/issues/18)) ([fc43679](https://github.com/edycutjong/revoker/commit/fc436793c28b5084d23482f5e329ac27bc398a92))
+
 ## [1.4.0](https://github.com/edycutjong/revoker/compare/v1.3.1...v1.4.0) (2026-08-08)
 
 
