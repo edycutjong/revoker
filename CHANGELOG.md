@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/edycutjong/revoker/compare/v1.1.2...v1.2.0) (2026-08-08)
+
+
+### Features
+
+* **site:** ambient background behind the masthead and hero ([#8](https://github.com/edycutjong/revoker/issues/8)) ([d7fa66f](https://github.com/edycutjong/revoker/commit/d7fa66fc6258cb36a3f5a5510886efc3341381bc))
+
 ## [1.1.2](https://github.com/edycutjong/revoker/compare/v1.1.1...v1.1.2) (2026-08-08)
 
 
