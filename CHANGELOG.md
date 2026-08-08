@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/edycutjong/revoker/compare/v1.5.0...v1.5.1) (2026-08-08)
+
+
+### Fixes
+
+* **pages:** stamp the released tag, not package.json ([#22](https://github.com/edycutjong/revoker/issues/22)) ([56b4529](https://github.com/edycutjong/revoker/commit/56b4529832a7cdce547c2ddd5501f636d49cb5a4))
+
 ## [1.5.0](https://github.com/edycutjong/revoker/compare/v1.4.1...v1.5.0) (2026-08-08)
 
 

@@ -1,6 +1,6 @@
 {
   "name": "revoker",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "private": true,
   "type": "module",
   "description": "Autonomous approval-drainer sentinel that lands approve(spender,0) through KeeperHub before the drain completes.",
