@@ -153,6 +153,18 @@ export interface RevokeOutcome {
   gasPriceWei?: string
   /** How many rungs of the ladder the landing needed. 0 = landed on the first try. */
   escalations?: number
+  /**
+   * KeeperHub's own identifier for the execution that carried this revoke — the
+   * escalated one, if a rung of the ladder replaced the original.
+   *
+   * Carried on the outcome and written into the audit trail because a
+   * transaction hash only proves that *something* landed. The executionId is
+   * what lets a reader open KeeperHub's record of the submission — the guarded
+   * check-and-execute, its condition, its sponsorship — and confirm that this
+   * revoke went through KeeperHub rather than around it. Without it, "executed
+   * via KeeperHub" is a claim the reader has to take on trust.
+   */
+  executionId?: string
   disposition?: RevokeDisposition
   error?: string
 }
@@ -199,6 +211,14 @@ interface Landing {
   disposition: RevokeDisposition
   status: ExecutionStatus
   escalations: number
+  /**
+   * The execution that actually reached this verdict. NOT necessarily the one
+   * we started polling: each rung of the ladder is a separate execution record,
+   * so after an escalation the original id names a submission that no longer
+   * decides anything. Reporting the wrong one would send a reader to a
+   * KeeperHub record that disagrees with the transaction we published.
+   */
+  executionId: string
 }
 
 /**
@@ -241,7 +261,12 @@ function failureReason(landing: Landing | undefined): string {
 async function awaitLanding(
   kh: KeeperHub,
   executionId: string,
-  escalate: (rung: number, gasLimitMultiplier: string) => Promise<string | undefined>,
+  escalate: (
+    rung: number,
+    gasLimitMultiplier: string,
+    /** The execution this rung is trying to replace, so the trail links the two. */
+    replacing: string,
+  ) => Promise<string | undefined>,
 ): Promise<Landing> {
   const startedAt = Date.now()
   let current = executionId
@@ -252,11 +277,11 @@ async function awaitLanding(
     const status = await kh.getExecutionStatus(current)
 
     const disposition = classify(status)
-    if (disposition) return { disposition, status, escalations }
+    if (disposition) return { disposition, status, escalations, executionId: current }
 
     const now = Date.now()
     if (now - startedAt >= LANDING_BUDGET_MS) {
-      return { disposition: 'pending', status, escalations }
+      return { disposition: 'pending', status, escalations, executionId: current }
     }
 
     const nextRung = ESCALATION_RUNGS[escalations]
@@ -264,7 +289,7 @@ async function awaitLanding(
       escalations += 1
       escalateAt = now + ESCALATE_AFTER_MS
       try {
-        const replacement = await escalate(escalations, nextRung)
+        const replacement = await escalate(escalations, nextRung, current)
         // No replacement id means the resubmission's `allowance > 0` condition
         // was already false — i.e. the original landed while we were asking.
         // Keep polling the original, which is about to report terminal.
@@ -313,16 +338,30 @@ export async function revokeApproval(input: {
       ...(idempotencyKey ? { idempotencyKey } : {}),
     })
 
-  audit('revoke.submit', {
-    token,
-    owner,
-    spender,
-    method: 'check-and-execute',
-    gasLimitMultiplier: FIRST_GAS_LIMIT_MULTIPLIER,
-  })
+  // KeeperHub's id for whichever execution is currently authoritative. Hoisted
+  // above the try so the catch below can still name the execution that was in
+  // flight when the poll blew up — "we submitted e-123 and then lost contact" is
+  // a materially different incident from "the submission never left".
+  let executionId: string | undefined
 
   try {
     const result = await submit(FIRST_GAS_LIMIT_MULTIPLIER, input.idempotencyKey)
+    executionId = result.executionId
+
+    // Logged AFTER the call returns, not before it. Emitted beforehand this
+    // record could only restate arguments we already chose, and the one
+    // identifier a reader needs — KeeperHub's executionId — did not exist yet,
+    // so the trail proved a transaction happened without proving it happened
+    // through KeeperHub. A submission that never reached KeeperHub still leaves
+    // a record: the catch below writes it as the failure it actually was.
+    audit('revoke.submit', {
+      token,
+      owner,
+      spender,
+      method: 'check-and-execute',
+      executionId,
+      gasLimitMultiplier: FIRST_GAS_LIMIT_MULTIPLIER,
+    })
 
     if (!result.executed) {
       const latencyMs = Date.now() - startedAt
@@ -345,26 +384,37 @@ export async function revokeApproval(input: {
     let landing: Landing | undefined
 
     if (result.executionId) {
-      landing = await awaitLanding(kh, result.executionId, async (rung, gasLimitMultiplier) => {
-        audit('revoke.submit', {
-          token,
-          owner,
-          spender,
-          method: 'check-and-execute',
-          escalation: rung,
-          gasLimitMultiplier,
-          reason: `no terminal state after ${ESCALATE_AFTER_MS / 1_000}s (~2.5 blocks, above our measured max) — resubmitting at the current base fee, on a wider gas limit`,
-        })
-        const bumped = await submit(
-          gasLimitMultiplier,
-          input.idempotencyKey ? `${input.idempotencyKey}-esc${rung}` : undefined,
-        )
-        return bumped.executionId
-      })
+      landing = await awaitLanding(
+        kh,
+        result.executionId,
+        async (rung, gasLimitMultiplier, replacing) => {
+          const bumped = await submit(
+            gasLimitMultiplier,
+            input.idempotencyKey ? `${input.idempotencyKey}-esc${rung}` : undefined,
+          )
+          // Same reason as the first submit: the record is written once the rung
+          // has an id of its own. `replaces` chains it to the execution it was
+          // sent to overtake, so a reader following the trail can tell which of
+          // several KeeperHub records belongs to this one revoke.
+          audit('revoke.submit', {
+            token,
+            owner,
+            spender,
+            method: 'check-and-execute',
+            escalation: rung,
+            executionId: bumped.executionId,
+            replaces: replacing,
+            gasLimitMultiplier,
+            reason: `no terminal state after ${ESCALATE_AFTER_MS / 1_000}s (~2.5 blocks, above our measured max) — resubmitting at the current base fee, on a wider gas limit`,
+          })
+          return bumped.executionId
+        },
+      )
       hash = landing.status.transactionHash ?? hash
       sponsored = landing.status.sponsored
       gasUsedWei = landing.status.gasUsedWei
       gasPriceWei = landing.status.gasPriceWei
+      executionId = landing.executionId
     }
 
     // Confirm against the chain rather than trusting the execution report.
@@ -381,6 +431,7 @@ export async function revokeApproval(input: {
       ...(gasUsedWei ? { gasUsedWei } : {}),
       ...(gasPriceWei ? { gasPriceWei } : {}),
       ...(landing ? { escalations: landing.escalations } : {}),
+      ...(executionId ? { executionId } : {}),
     }
 
     // The chain outranks the execution record: if the allowance is gone it is
@@ -391,6 +442,7 @@ export async function revokeApproval(input: {
         token,
         spender,
         txHash: hash,
+        executionId,
         explorerUrl: outcome.explorerUrl,
         latencyMs,
         sponsored,
@@ -409,6 +461,7 @@ export async function revokeApproval(input: {
         token,
         spender,
         txHash: hash,
+        executionId,
         reason,
         gasUsedWei,
         gasPriceWei,
@@ -432,6 +485,7 @@ export async function revokeApproval(input: {
         token,
         spender,
         txHash: hash,
+        executionId,
         terminal: false,
         disposition: 'pending',
         reason: pendingReason(ESCALATION_RUNGS.length),
@@ -449,6 +503,7 @@ export async function revokeApproval(input: {
         token,
         spender,
         txHash: hash,
+        executionId,
         terminal: true,
         reason,
         allowanceAfter: allowanceAfter.toString(),
@@ -460,8 +515,22 @@ export async function revokeApproval(input: {
   } catch (error) {
     const latencyMs = Date.now() - startedAt
     const message = error instanceof Error ? error.message : String(error)
-    audit('revoke.failed', { token, spender, terminal: true, error: message, latencyMs })
-    return { executed: false, latencyMs, disposition: 'failed', error: message }
+    audit('revoke.failed', {
+      token,
+      spender,
+      method: 'check-and-execute',
+      executionId,
+      terminal: true,
+      error: message,
+      latencyMs,
+    })
+    return {
+      executed: false,
+      latencyMs,
+      disposition: 'failed',
+      error: message,
+      ...(executionId ? { executionId } : {}),
+    }
   }
 }
 
@@ -611,21 +680,28 @@ export async function revokePermit2Allowances(input: {
       ...(idempotencyKey ? { idempotencyKey } : {}),
     })
 
-  audit('revoke.submit', {
-    owner,
-    method: 'check-and-execute',
-    action: 'permit2-lockdown',
-    pairs: pairs.length,
-    guard: `${guard.token}:${guard.spender}`,
-    // Which contract and function the server-side condition actually reads.
-    // Recorded because the last bug here was invisible in the submit log: the
-    // guard looked right and evaluated nothing.
-    guardVia: `${guardAddress}.${PERMIT2_GUARD_FUNCTION}`,
-    gasLimitMultiplier: FIRST_GAS_LIMIT_MULTIPLIER,
-  })
+  // See revokeApproval: hoisted so the catch can name the execution in flight.
+  let executionId: string | undefined
 
   try {
     const result = await submit(FIRST_GAS_LIMIT_MULTIPLIER, input.idempotencyKey)
+    executionId = result.executionId
+
+    // After the call, for the same reason as the ERC-20 path: this record is
+    // only worth writing once it can name KeeperHub's execution.
+    audit('revoke.submit', {
+      owner,
+      method: 'check-and-execute',
+      action: 'permit2-lockdown',
+      pairs: pairs.length,
+      executionId,
+      guard: `${guard.token}:${guard.spender}`,
+      // Which contract and function the server-side condition actually reads.
+      // Recorded because the last bug here was invisible in the submit log: the
+      // guard looked right and evaluated nothing.
+      guardVia: `${guardAddress}.${PERMIT2_GUARD_FUNCTION}`,
+      gasLimitMultiplier: FIRST_GAS_LIMIT_MULTIPLIER,
+    })
 
     if (!result.executed) {
       const latencyMs = Date.now() - startedAt
@@ -661,26 +737,33 @@ export async function revokePermit2Allowances(input: {
     let landing: Landing | undefined
 
     if (result.executionId) {
-      landing = await awaitLanding(kh, result.executionId, async (rung, gasLimitMultiplier) => {
-        audit('revoke.submit', {
-          owner,
-          method: 'check-and-execute',
-          action: 'permit2-lockdown',
-          pairs: pairs.length,
-          escalation: rung,
-          gasLimitMultiplier,
-          reason: `no terminal state after ${ESCALATE_AFTER_MS / 1_000}s (~2.5 blocks, above our measured max) — resubmitting at the current base fee, on a wider gas limit`,
-        })
-        const bumped = await submit(
-          gasLimitMultiplier,
-          input.idempotencyKey ? `${input.idempotencyKey}-esc${rung}` : undefined,
-        )
-        return bumped.executionId
-      })
+      landing = await awaitLanding(
+        kh,
+        result.executionId,
+        async (rung, gasLimitMultiplier, replacing) => {
+          const bumped = await submit(
+            gasLimitMultiplier,
+            input.idempotencyKey ? `${input.idempotencyKey}-esc${rung}` : undefined,
+          )
+          audit('revoke.submit', {
+            owner,
+            method: 'check-and-execute',
+            action: 'permit2-lockdown',
+            pairs: pairs.length,
+            escalation: rung,
+            executionId: bumped.executionId,
+            replaces: replacing,
+            gasLimitMultiplier,
+            reason: `no terminal state after ${ESCALATE_AFTER_MS / 1_000}s (~2.5 blocks, above our measured max) — resubmitting at the current base fee, on a wider gas limit`,
+          })
+          return bumped.executionId
+        },
+      )
       hash = landing.status.transactionHash ?? hash
       sponsored = landing.status.sponsored
       gasUsedWei = landing.status.gasUsedWei
       gasPriceWei = landing.status.gasPriceWei
+      executionId = landing.executionId
     }
 
     // Confirm every slot against the chain rather than trusting the execution
@@ -709,12 +792,16 @@ export async function revokePermit2Allowances(input: {
       ...(gasUsedWei ? { gasUsedWei } : {}),
       ...(gasPriceWei ? { gasPriceWei } : {}),
       ...(landing ? { escalations: landing.escalations } : {}),
+      ...(executionId ? { executionId } : {}),
     }
 
+    // Shared by all four endings below, so the executionId is carried by every
+    // one of them rather than only by the happy path.
     const detail = {
       owner,
       action: 'permit2-lockdown',
       txHash: hash,
+      executionId,
       pairs: pairs.length,
       cleared: cleared.length,
       latencyMs,
@@ -777,10 +864,19 @@ export async function revokePermit2Allowances(input: {
       owner,
       action: 'permit2-lockdown',
       pairs: pairs.length,
+      executionId,
       terminal: true,
       error: message,
       latencyMs,
     })
-    return { executed: false, latencyMs, pairs, cleared: [], disposition: 'failed', error: message }
+    return {
+      executed: false,
+      latencyMs,
+      pairs,
+      cleared: [],
+      disposition: 'failed',
+      error: message,
+      ...(executionId ? { executionId } : {}),
+    }
   }
 }

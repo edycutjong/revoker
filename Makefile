@@ -1,7 +1,33 @@
-.PHONY: help install check lint typecheck test contracts spike seed seed-permit2 arm watch verify bench clean e2e lighthouse security-scan
+.PHONY: help demo demo-verify install check lint typecheck test contracts spike seed seed-permit2 arm watch verify bench clean e2e lighthouse security-scan submission-check
 
+# The old pattern was `^[a-z0-9-]+:.*?## `, which silently dropped any target
+# whose name used a capital, an underscore or a dot — a target added that way
+# still worked, it just stopped existing as far as `make help` was concerned,
+# and nothing failed to say so. It also leaned on `*?` inside an ERE, which is
+# undefined in POSIX and only happens to work under GNU grep.
+#
+# `-h` because MAKEFILE_LIST grows the moment anything is included, and grep
+# prefixes filenames as soon as it is handed two. Source order is kept rather
+# than sorted: the file is ordered by what you reach for first.
+#
+# test/makefile.test.ts asserts every .PHONY target appears in this output, so
+# a target added without a `## ` doc comment is a red build, not a silent gap.
 help:  ## Show this help
-	@grep -E '^[a-z0-9-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+	@grep -hE '^[A-Za-z0-9][A-Za-z0-9_.-]*:.*## ' $(MAKEFILE_LIST) \
+	  | sed -E 's/^([A-Za-z0-9][A-Za-z0-9_.-]*):.*## /\1\|/' \
+	  | awk '{ i = index($$0, "|"); printf "  \033[36m%-17s\033[0m %s\n", substr($$0, 1, i - 1), substr($$0, i + 1) }'
+
+# ── The zero-credential path — start here ────────────────────────────────────
+# These two are the whole judge path, and they were reachable only by reading
+# package.json. Both run with no API key, no wallet, no RPC endpoint of your
+# own and no network: `demo` is a single scan with execution disabled, and
+# `demo-verify` replays a recorded Sepolia run through the real dashboard.
+# Nothing is watched and nothing is ever sent.
+demo:  ## Zero-credential: one dry-run scan of the threat, executes nothing
+	pnpm demo
+
+demo-verify:  ## Zero-credential: replay a recorded run at :3000/verify (set PORT= to move it)
+	pnpm demo:verify
 
 install:  ## Install deps + forge-std
 	pnpm install
@@ -83,3 +109,10 @@ lighthouse:  ## Lighthouse budgets (a11y, SEO, perf) against site/
 security-scan:  ## Credential grep + dependency audit (CI also runs gitleaks)
 	bash scripts/check-no-credentials.sh
 	pnpm audit --audit-level=high
+
+# The same script CI runs in the "Submission readiness" job. Exposed here too
+# because the things it catches — a FILL_ placeholder in a badge, an untracked
+# README image — are found by looking at the repo, not by looking at the code,
+# and the person who can fix them wants the answer before pushing.
+submission-check:  ## Placeholders, required links, tracked images: READY / NOT READY
+	pnpm check:submission

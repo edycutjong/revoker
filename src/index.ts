@@ -1,6 +1,6 @@
-import { readFileSync } from 'node:fs'
 import { config } from './config.js'
 import { onAudit, logLine } from './audit.js'
+import { loadDenylist, loadWatchlist } from './lists.js'
 import { Watcher } from './watcher.js'
 
 /**
@@ -10,26 +10,6 @@ import { Watcher } from './watcher.js'
  *   pnpm watch -- --dry-run detect and report, execute nothing
  *   pnpm watch -- --once    a single scan, then exit
  */
-
-function loadDenylist(): string[] {
-  try {
-    const raw = readFileSync(new URL('../data/denylist.json', import.meta.url), 'utf8')
-    const parsed = JSON.parse(raw) as { addresses?: Array<{ address: string }> }
-    return (parsed.addresses ?? []).map((entry) => entry.address)
-  } catch {
-    return []
-  }
-}
-
-function loadWatchlist(chainId: number): string[] {
-  try {
-    const raw = readFileSync(new URL('../data/watchlist.json', import.meta.url), 'utf8')
-    const parsed = JSON.parse(raw) as Record<string, Array<{ address: string }> | undefined>
-    return (parsed[String(chainId)] ?? []).map((entry) => entry.address)
-  } catch {
-    return []
-  }
-}
 
 async function main(): Promise<void> {
   const args = new Set(process.argv.slice(2))

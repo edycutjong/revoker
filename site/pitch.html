@@ -241,7 +241,18 @@ h2{font-size:72px; line-height:1.06}
 .video-chip b{color:var(--text); font-weight:600}
 
 /* ═══════════ slide 6 — architecture ═══════════ */
-.arch{width:100%; height:auto; margin-top:74px}
+/* 74px before the second-ledger band moved in below the diagram; the slide is
+   height-locked at 1080, so the two share the gap rather than overflow it */
+.arch{width:100%; height:auto; margin-top:50px}
+/* the second-ledger footnote under the architecture: same panel + accent-rule
+   recipe as .custody, laid out as a badge beside its prose */
+.p2-band{display:flex; gap:26px; align-items:flex-start; margin-top:34px;
+  background:var(--panel); border:1px solid var(--line); border-left:4px solid var(--ok);
+  border-radius:14px; padding:22px 30px}
+.p2-band .tag{flex:0 0 auto; margin-top:3px; color:var(--ok); background:var(--ok-dim);
+  border:1px solid var(--ok-line)}
+.p2-band p{font-size:21px; line-height:1.5; color:var(--muted); text-wrap:pretty}
+.p2-band b{color:var(--text); font-weight:600}
 .arch .n-box{fill:var(--panel); stroke:var(--line); stroke-width:1.5}
 .arch .n-chip{fill:var(--panel2); stroke:var(--line); stroke-width:1.2}
 .arch .n-title{font:600 25px var(--font-display); fill:var(--text); letter-spacing:-.01em}
@@ -359,6 +370,11 @@ h2{font-size:72px; line-height:1.06}
 .expected{font-size:20px; color:var(--muted); margin-top:18px}
 .expected code{color:var(--ok); font-weight:700; background:var(--panel2);
   border:1px solid var(--line); border-radius:6px; padding:.05em .45em}
+/* the ERC-20 receipt above is a command you run; these are the Permit2 half of
+   the same claim, kept as links because lockdown() is proved by its Logs tab */
+.p2-receipts{margin-top:30px; padding-top:24px; border-top:1px dashed var(--line)}
+.p2-r-label{display:block; font-size:19px; color:var(--muted); margin-bottom:12px}
+.p2-r-row{display:flex; gap:10px 34px; flex-wrap:wrap}
 .ask-links{display:flex; gap:14px 44px; flex-wrap:wrap; margin-top:38px;
   font:19px/1.5 var(--font-mono)}
 .ask-links span{color:var(--muted)}
@@ -598,7 +614,16 @@ h2{font-size:72px; line-height:1.06}
       <rect class="n-box" x="380" y="490" width="930" height="58" rx="12"/>
       <text class="n-sub" x="845" y="526" text-anchor="middle">audit trail — execution id &middot; status &middot; gas &middot; sponsorship &#8594; local /verify dashboard (SSE)</text>
     </svg>
-    <aside class="speaker-notes">The whole system is one loop: read the chain, evaluate four auditable rules plus a hold channel — no ML, every firing carries its evidence — and hand execution to KeeperHub. Note what the agent never touches: a private key. Signing happens inside a Turnkey enclave, and every execution lands in an audit trail you can watch live on the local dashboard.</aside>
+    <div class="p2-band">
+      <span class="tag ok">Second ledger</span>
+      <p><b>That loop runs over two allowance ledgers, not one.</b> Permit2 — the shared approval
+        contract most of the ERC-20 ecosystem routes through — keeps its own. A grant written
+        there changes nothing in the token and emits <b>no</b> <code>Approval</code> event, so
+        every watcher built on those logs is blind to it by construction. Revoker reads both,
+        and revokes Permit2 with <code>lockdown()</code>: <b>however many slots, one
+        transaction</b>.</p>
+    </div>
+    <aside class="speaker-notes">The whole system is one loop: read the chain, evaluate four auditable rules plus a hold channel — no ML, every firing carries its evidence — and hand execution to KeeperHub. Note what the agent never touches: a private key. Signing happens inside a Turnkey enclave, and every execution lands in an audit trail you can watch live on the local dashboard. And that loop runs twice over — because Permit2 keeps a second allowance ledger the token contract never sees. A grant written there emits no Approval event at all, so every watcher built on those logs is structurally blind to it. We watch both, and we clear Permit2 with lockdown, which zeroes every fired slot in a single transaction.</aside>
   </section>
 
   <!-- ═══════════════ 7 · THE RACE ═══════════════ -->
@@ -750,6 +775,14 @@ h2{font-size:72px; line-height:1.06}
         <div>&nbsp;&nbsp;--rpc-url https://ethereum-sepolia-rpc.publicnode.com</div>
       </div>
       <p class="expected">Expected output: <code>0</code></p>
+      <div class="p2-receipts">
+        <span class="p2-r-label">Permit2 <code>lockdown()</code>, same story on the second ledger</span>
+        <span class="p2-r-row">
+          <a class="tx" href="https://sepolia.etherscan.io/tx/0xa52cb025170b45b58ba804ce6747aa0f9ae5ce87cdd66813688d8fd81c5855a2" rel="noopener">arm upstream &middot; 11445297</a>
+          <a class="tx" href="https://sepolia.etherscan.io/tx/0xe978f12fb5fe7766b7659bb74569a9cfdb08ec3e4762c9eeaabb539a0c753297" rel="noopener">Permit2.approve &middot; 11445298</a>
+          <a class="tx" href="https://sepolia.etherscan.io/tx/0x20d70cf1577f084944931eada7955b5772a5de3553fda890131354d97f6ba124" rel="noopener">lockdown() &middot; 11445392</a>
+        </span>
+      </div>
       <div class="ask-links">
         <span><a href="https://github.com/edycutjong/revoker" rel="noopener">github.com/edycutjong/revoker</a> &middot; public, MIT</span>
         <span><a href="https://dorahacks.io/hackathon/agents-onchain" rel="noopener">dorahacks.io/hackathon/agents-onchain</a></span>
@@ -773,7 +806,7 @@ h2{font-size:72px; line-height:1.06}
       </a>
       <p class="closer">The drainer fired.<br>It found <b>an empty room</b>.</p>
     </div>
-    <aside class="speaker-notes">Don't take the deck's word for any of it. Run the cast call — the allowance Revoker zeroed is still zero, on a public RPC, right now. Every bar and every number links to a transaction. The drainer fired, exactly as its author intended — and it found an empty room. That's what execution looks like.</aside>
+    <aside class="speaker-notes">Don't take the deck's word for any of it. Run the cast call — the allowance Revoker zeroed is still zero, on a public RPC, right now. Every bar and every number links to a transaction. And the three links under the command are the Permit2 half: arm the grant in Permit2's own ledger, then clear it with lockdown — consecutive blocks, one Lockdown event emitted by canonical Permit2. The drainer fired, exactly as its author intended — and it found an empty room. That's what execution looks like.</aside>
   </section>
 
 </div><!-- /stage -->

@@ -410,6 +410,10 @@ section{padding:72px 0; border-top:1px solid var(--line); scroll-margin-top:calc
 .observed pre{margin:10px 0 0; padding:12px 16px; background:var(--panel); border:1px solid var(--line);
   border-radius:9px; overflow-x:auto; font-family:var(--mono); font-size:.78rem; color:var(--text)}
 .observed .obs-eq{display:block; margin-top:8px; font-family:var(--mono); font-size:.76rem; color:var(--muted)}
+/* the Permit2 section reuses .race, .mini-stats and the benchmark table wholesale;
+   only the vertical rhythm between those borrowed blocks needs saying */
+#permit2 .mini-stats{margin:30px 0 22px}
+#permit2 .relay-note{max-width:var(--prose-sm)}
 .custody{margin-top:22px; max-width:calc(var(--prose-xs) + 80px); display:flex; gap:14px; align-items:flex-start;
   background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px 20px}
 .custody svg{flex:0 0 auto; color:var(--accent); margin-top:2px}
@@ -594,6 +598,7 @@ td.hot{color:var(--text); font-weight:700}
       <a href="#proof">Proof</a>
       <a href="#verify">Verify</a>
       <a href="#how">How it works</a>
+      <a href="#permit2">Permit2</a>
       <a href="#benchmark">Benchmark</a>
       <a href="#limits">Limits</a>
       <a class="ext" href="https://github.com/edycutjong/revoker" rel="noopener"><svg class="gh-mark" viewBox="0 0 16 16" width="1em" height="1em" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.011.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>GitHub</a>
@@ -793,6 +798,109 @@ td.hot{color:var(--text); font-weight:700}
         <p><b>No key to steal.</b> Signing happens inside a Turnkey enclave via KeeperHub — the agent
           process never holds a private key. An autonomous agent with a hot key is a liability;
           one that can only ask a policy-bound signer to act is not.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= PERMIT2 ================= -->
+  <section id="permit2" aria-labelledby="permit2-h">
+    <div class="container">
+      <div class="sec-head">
+        <p class="eyebrow">The second ledger</p>
+        <h2 id="permit2-h">The approval an ERC-20 watcher cannot see.</h2>
+        <p class="lede">Permit2 is the shared approval contract most of the ERC-20 ecosystem now
+          routes through, and it keeps its <b>own</b> allowance ledger. A grant written there
+          never touches the token contract — no <code>Approval</code> event, no change to the
+          token's own allowance mapping.</p>
+      </div>
+
+      <div class="race">
+        <div class="race-col bad reveal">
+          <h3>watch ERC-20 Approval logs <span class="who">every approval tool — including this one, until recently</span></h3>
+          <div class="race-body">
+            <div class="op"><span class="op-n" aria-hidden="true">1</span>grant written into Permit2<span class="op-out">&rarr; its own ledger</span></div>
+            <div class="race-gap">
+              <span class="gap-label">structurally blind</span>
+              The token emits <b>no</b> <code>Approval</code> event and its own allowance mapping
+              never changes. This isn't a missed alert — there is no event to subscribe to.
+            </div>
+            <div class="op"><span class="op-n" aria-hidden="true">2</span>spender pulls funds through Permit2</div>
+          </div>
+          <div class="verdict bad">A live, unlimited approval that the watcher reports as absent.</div>
+        </div>
+        <div class="race-vs" aria-hidden="true">versus</div>
+        <div class="race-col good reveal">
+          <h3>read Permit2's ledger <span class="who">Revoker, second watch path</span></h3>
+          <div class="race-body">
+            <div class="atomic-box">
+              <div class="op"><span class="op-n" aria-hidden="true">1</span>Permit2 Approval / Permit / Lockdown logs</div>
+              <div class="atomic-arrow" aria-hidden="true">&darr;</div>
+              <div class="op"><span class="op-n" aria-hidden="true">2</span>lockdown([&hellip;pairs])<span class="op-out">N slots</span></div>
+              <span class="atomic-tag">one transaction, however many slots</span>
+            </div>
+          </div>
+          <div class="verdict good">The ERC-20 path pays a base fee per exposure. <code>lockdown()</code> takes an array and clears them all at once.</div>
+        </div>
+      </div>
+
+      <div class="mini-stats">
+        <span class="mini-stat"><b>52,213</b> gas, sponsored</span>
+        <span class="mini-stat"><b>16.2s</b> detect &rarr; confirmed</span>
+        <span class="mini-stat"><b>1</b> Lockdown log, emitted by canonical Permit2</span>
+        <span class="mini-stat"><b>MAX_UINT160 &rarr; 0</b> slot amount</span>
+      </div>
+
+      <div class="tablewrap">
+        <div class="tablescroll">
+        <table>
+          <caption class="vh">The Permit2 lockdown, proved on Ethereum Sepolia</caption>
+          <thead>
+            <tr><th scope="col">#</th><th scope="col">Step</th><th scope="col">Block</th><th scope="col">Transaction</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td class="rowlabel">Upstream <code>approve(PERMIT2, MAX)</code> — the enabling grant</td>
+              <td>11445297</td>
+              <td><a class="tx" href="https://sepolia.etherscan.io/tx/0xa52cb025170b45b58ba804ce6747aa0f9ae5ce87cdd66813688d8fd81c5855a2" rel="noopener">0xa52cb025&hellip;5855a2</a></td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td class="rowlabel"><code>Permit2.approve</code> — arm the threat in Permit2's ledger</td>
+              <td>11445298</td>
+              <td><a class="tx" href="https://sepolia.etherscan.io/tx/0xe978f12fb5fe7766b7659bb74569a9cfdb08ec3e4762c9eeaabb539a0c753297" rel="noopener">0xe978f12f&hellip;c73297</a></td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td class="rowlabel"><b>lockdown() — the revoke</b></td>
+              <td>11445392</td>
+              <td><a class="tx" href="https://sepolia.etherscan.io/tx/0x20d70cf1577f084944931eada7955b5772a5de3553fda890131354d97f6ba124" rel="noopener">0x20d70cf1&hellip;6ba124</a></td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+      </div>
+
+      <p class="relay-note"><b>Reading step 3.</b> Open the <code>Logs</code> tab — exactly one
+        entry, a <code>Lockdown</code> event emitted by <b>canonical Permit2 itself</b>
+        (<code>0x000000000022D473030F116dDEE9F6B43aC78BA3</code>), and the slot's
+        <code>amount</code> went from <code>MAX_UINT160</code> to <b>0</b>. The block column is
+        there for the same reason as the one above: <b>11445297 &rarr; 11445298 &rarr;
+        11445392</b> is one sequence you can check rather than take on trust.</p>
+
+      <div class="honesty reveal">
+        <p><b>The detour that made this land.</b> The guard first read Permit2's own
+          <code>allowance()</code>, which returns three values. The check-and-execute condition is
+          <code>{operator, value}</code> with no tuple selector, so it had no scalar to compare:
+          it scored <code>gt 0</code> as false, skipped the write, and logged a tidy success while
+          the grant sat there fully armed. Only a real transaction could have caught that.</p>
+        <p>The fix is a 723-byte ownerless, storageless view
+          (<a href="https://sepolia.etherscan.io/tx/0x04fe33e1c0f69b59ce4653c5bc020044845add5010ed94816515f9148b0e8b80" rel="noopener">deployed at block 11445389</a>,
+          after the threat was armed — which is why it sits outside the sequence above) that
+          flattens the tuple to a single <code>uint160</code>. The action still calls canonical
+          Permit2, and check and action still sit inside the <b>same</b> operation, so the
+          no-front-run property holds here too. If the helper is missing the agent <b>refuses to
+          submit</b> rather than send an unguarded lockdown.</p>
       </div>
     </div>
   </section>

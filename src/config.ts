@@ -69,8 +69,9 @@ if (auditLogFromFile !== undefined && process.env['REVOKER_AUDIT_LOG'] === undef
  * `REVOKER_DEMO=1` lets anyone run the product from a clean `git clone` with no
  * KeeperHub account. It exists because a single `throw` in this file was the
  * entire barrier: everything downstream already degrades correctly without
- * credentials (getHeldTokens swallows its own failure, isSourceVerified fails
- * closed), so a reviewer could reach the chain, read real Approval logs and see
+ * credentials (getHeldTokens swallows its own failure, sourceVerification
+ * reports 'unknown' and the rules abstain rather than firing on it), so a
+ * reviewer could reach the chain, read real Approval logs and see
  * real exposures — but only after obtaining an organisation API key first.
  *
  * The substitutions are UNCONDITIONAL, not fallbacks. Demo mode is the canned
@@ -160,9 +161,96 @@ if (DEMO) {
   )
 }
 
+/**
+ * ── The autonomous revoke ceiling ────────────────────────────────────────────
+ *
+ * A hard cap on how many approvals the unattended loop may revoke in a rolling
+ * 24 hours. Not a throttle for the API's benefit — a blast-radius limit for the
+ * wallet's.
+ *
+ * 12 is chosen against both ends. Above it: a real incident is remediated by
+ * revoking the handful of grants one compromised counterparty holds — the demo
+ * wallet has two, and a wallet that genuinely needs a thirteenth emergency
+ * revoke inside one day is having an event a human should be awake for. Below
+ * it: an agent wallet accumulates dozens of live router approvals, so 12 keeps
+ * any systemic misfire to a fraction of them rather than all of them. Averaged
+ * out it is one revoke every two hours, a rate no legitimate incident sustains.
+ *
+ * The window is ROLLING, not a calendar day, so the budget cannot be doubled by
+ * straddling midnight.
+ */
+const DEFAULT_MAX_REVOKES_PER_DAY = 12
+
+/**
+ * A ceiling that parses to garbage must not silently become Infinity or 0.
+ * Infinity is the rail switched off by a typo; 0 is an agent that has quietly
+ * stopped defending anything. Either way the operator believes they configured
+ * a number. Falling back to the documented default, loudly, is the only
+ * behaviour that leaves the wallet in a state somebody can reason about.
+ */
+function positiveIntOr(raw: string | undefined, fallback: number, key: string): number {
+  if (raw === undefined) return fallback
+  const value = Number(raw)
+  if (Number.isInteger(value) && value > 0) return value
+  console.warn(`${key}="${raw}" is not a positive integer — using the default of ${fallback}.`)
+  return fallback
+}
+
+/**
+ * Spenders the operator has explicitly blessed. See data/allowlist.json for
+ * what belongs there and why an entry is a standing instruction, not a note.
+ *
+ * Lives here rather than in rules.ts so that the watcher and the MCP surface
+ * load the SAME list through one code path. Two loaders would eventually
+ * disagree about which spenders are protected, and the surface that drifted
+ * would be the one that revoked a router.
+ *
+ * Here rather than alongside the other list loaders because this one resolves
+ * through the credential chain as well as the file: REVOKER_ALLOWLIST is read
+ * with the same precedence as every other key, so an operator can bless an
+ * address from the environment without editing a tracked file. That chain lives
+ * in this module.
+ *
+ * Lowercased on the way in: an allow-list that misses because of checksum
+ * casing is an allow-list that does not exist.
+ */
+export function loadAllowlist(): Set<string> {
+  const addresses = new Set<string>()
+
+  try {
+    const raw = readFileSync(new URL('../data/allowlist.json', import.meta.url), 'utf8')
+    const parsed = JSON.parse(raw) as { addresses?: Array<{ address?: string }> }
+    for (const entry of parsed.addresses ?? []) {
+      if (entry.address) addresses.add(entry.address.toLowerCase())
+    }
+  } catch {
+    // A missing or malformed file must not stop the agent starting. It fails
+    // toward "no blessings", which only ever makes the agent MORE willing to
+    // revoke — never less — so it cannot be used to smuggle an address past a
+    // rule. The rate ceiling and the correlated-failure brake still stand.
+  }
+
+  for (const entry of (read('REVOKER_ALLOWLIST') ?? '').split(',')) {
+    const address = entry.trim().toLowerCase()
+    if (address) addresses.add(address)
+  }
+
+  return addresses
+}
+
 export const config = {
   /** True when this process is running the credential-free public demo. */
   demo: DEMO,
+
+  /**
+   * Hard ceiling on autonomous revokes per rolling 24h. See
+   * DEFAULT_MAX_REVOKES_PER_DAY for the reasoning behind the number.
+   */
+  maxRevokesPerDay: positiveIntOr(
+    read('REVOKER_MAX_REVOKES_PER_DAY'),
+    DEFAULT_MAX_REVOKES_PER_DAY,
+    'REVOKER_MAX_REVOKES_PER_DAY',
+  ),
 
   /**
    * Where the /verify dashboard listens. Documented in .env.example, so it has

@@ -245,6 +245,46 @@ The condition was evaluated against the live chain, not a cached value —
 KeeperHub reported `observedValue: 115792089237316195423570985008687907853269984665640564039457584007913129639935`
 at execution time.
 
+### The KeeperHub side of those same transactions — `executionId`
+
+An explorer proves the **outcome**: a relayer address called `approve`, and
+MockUSDC emitted `Approval(owner, spender, 0)`. It cannot prove the **method**.
+Nothing on that page shows that the write went through a *guarded*
+`check-and-execute` — that the allowance was re-read server-side and the
+condition evaluated before anything was signed. Read from the chain alone,
+"executed via KeeperHub" is an inference from a `from` address.
+
+The other half of the proof is KeeperHub's own execution record, addressed by an
+**`executionId`**. Revoker publishes it. Every stage of a revoke writes it into
+`audit/revoker.jsonl` next to the transaction hash, on both revoke paths:
+
+| Stage | Carries | Why it matters there |
+|---|---|---|
+| `revoke.submit` | `executionId` (+ `replaces` on an escalation rung) | names the execution the moment KeeperHub accepts it — each ladder rung is a *separate* record, chained by `replaces` |
+| `revoke.confirmed` | `executionId`, `txHash` | the join: this chain transaction ↔ that KeeperHub execution |
+| `revoke.reverted` | `executionId`, `txHash` | it landed and failed — the execution record holds the revert KeeperHub saw |
+| `revoke.pending` | `executionId` | the id is the *only* handle on a revoke with no hash yet |
+| `revoke.failed` | `executionId` when one was issued | distinguishes "we submitted `exec-…` and lost contact" from "the submission never left" |
+
+Given one, anyone holding an org API key can pull KeeperHub's record of it:
+
+```bash
+jq -r 'select(.stage=="revoke.confirmed") | "\(.executionId)  \(.txHash)"' audit/revoker.jsonl
+
+curl -s -H "Authorization: Bearer $KH_API_KEY" \
+  "https://app.keeperhub.com/api/execute/<executionId>/status"
+```
+
+> **An honest gap, stated rather than filled.** The two reference runs published
+> above — the ERC-20 headline and the Permit2 `lockdown()` — were executed
+> *before* this field was emitted, so their `revoke.confirmed` rows carry
+> `txHash` but no `executionId`, and no id is quoted for them here. Back-filling
+> one would mean inventing an identifier, which on the one artifact whose entire
+> purpose is being trustworthy after the fact is the worst possible trade.
+> The plumbing is covered by tests on both paths and populates from the next
+> live revoke onward; until one is re-run, the KeeperHub-side lookup for these
+> two specific transactions is unavailable and this is the note saying so.
+
 ### The Permit2 lockdown — the grant an ERC-20 watcher cannot see
 
 Permit2 keeps its **own** allowance ledger. A signature-based grant writes that
@@ -253,12 +293,22 @@ all — no `Approval` event, no change to its own allowance mapping. Every
 approval watcher built on ERC-20 `Approval` logs, including this one until
 recently, is structurally blind to it.
 
-| # | Step | Transaction |
-|---|---|---|
-| 0 | Deploy `Permit2AllowanceView` guard helper | [`0x04fe33e1…0e8b80`](https://sepolia.etherscan.io/tx/0x04fe33e1c0f69b59ce4653c5bc020044845add5010ed94816515f9148b0e8b80) |
-| 1 | Upstream `approve(PERMIT2, MAX)` — the enabling grant | [`0xa52cb025…5855a2`](https://sepolia.etherscan.io/tx/0xa52cb025170b45b58ba804ce6747aa0f9ae5ce87cdd66813688d8fd81c5855a2) |
-| 2 | `Permit2.approve` — arm the threat in Permit2's ledger | [`0xe978f12f…c73297`](https://sepolia.etherscan.io/tx/0xe978f12fb5fe7766b7659bb74569a9cfdb08ec3e4762c9eeaabb539a0c753297) |
-| 3 | **`lockdown()` — the revoke** | [`0x20d70cf1…6ba124`](https://sepolia.etherscan.io/tx/0x20d70cf1577f084944931eada7955b5772a5de3553fda890131354d97f6ba124) |
+| # | Step | Block | Transaction |
+|---|---|---|---|
+| 1 | Upstream `approve(PERMIT2, MAX)` — the enabling grant | `11445297` | [`0xa52cb025…5855a2`](https://sepolia.etherscan.io/tx/0xa52cb025170b45b58ba804ce6747aa0f9ae5ce87cdd66813688d8fd81c5855a2) |
+| 2 | `Permit2.approve` — arm the threat in Permit2's ledger | `11445298` | [`0xe978f12f…c73297`](https://sepolia.etherscan.io/tx/0xe978f12fb5fe7766b7659bb74569a9cfdb08ec3e4762c9eeaabb539a0c753297) |
+| 3 | **`lockdown()` — the revoke** | `11445392` | [`0x20d70cf1…6ba124`](https://sepolia.etherscan.io/tx/0x20d70cf1577f084944931eada7955b5772a5de3553fda890131354d97f6ba124) |
+
+Same block column, same reason as the headline table: **11445297 → 11445298 →
+11445392** is one sequence, checkable rather than assertable — armed in two
+consecutive blocks, revoked 94 blocks later.
+
+One prerequisite sits outside that sequence and is dated honestly rather than
+renumbered into it: the `Permit2AllowanceView` guard helper was deployed at
+block `11445389` ([`0x04fe33e1…0e8b80`](https://sepolia.etherscan.io/tx/0x04fe33e1c0f69b59ce4653c5bc020044845add5010ed94816515f9148b0e8b80)),
+*after* the threat was armed. That ordering is the detour described below — the
+first lockdown attempt guarded on Permit2's own tuple getter, evaluated nothing,
+and the helper only exists because a live run proved it had to.
 
 Step 3: `status 0x1`, block **11445392**, **52,213 gas**, sponsored, **16.2s**
 detect-to-confirmed. **Open the `Logs` tab** — exactly one log, a `Lockdown`

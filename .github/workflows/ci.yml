@@ -166,12 +166,64 @@ jobs:
           # The contracts are small and security-relevant; anything less than
           # full branch coverage means an untested failure path.
           forge coverage --report summary | tee coverage.txt
-          if grep -E '^\| (src/|Total)' coverage.txt | grep -qv '100.00%'; then
-            echo "::error::Solidity coverage dropped below 100%"
-            grep -E '^\| (src/|Total)' coverage.txt
+          # --- BEGIN COVERAGE GATE (extracted verbatim by test/ci-workflow.test.ts) ---
+          # The previous gate was one line:
+          #
+          #   grep -E '^\| (src/|Total)' coverage.txt | grep -qv '100.00%'
+          #
+          # and it failed open in two independent ways, both of which shipped.
+          #
+          # 1. It asserted NOTHING against a summary it could not parse. Change
+          #    the table format and the first grep matches no rows, `grep -qv`
+          #    on empty input exits 1, the `if` is false, and the step prints
+          #    "Solidity coverage: 100%" and goes green.
+          # 2. `grep -v '100.00%'` is a substring test over the WHOLE ROW, and
+          #    a row has four percentages on it. A contract at 100% lines /
+          #    statements / functions and 50% BRANCHES still contains the string
+          #    "100.00%", so it was never selected and the gate passed — at 50%
+          #    branch coverage, on a security-relevant contract, which is
+          #    precisely the untested failure path this gate exists to catch.
+          #
+          # So: the shape of the table is checked before its contents, and the
+          # contents are checked cell by cell rather than by substring.
+          #
+          # The file's existence is checked first and separately. With no
+          # coverage.txt at all, `grep -c` prints nothing, both counts end up
+          # as empty strings, and `[ "" -eq 0 ]` fails as a syntax error inside
+          # an `if` condition — where `set -e` does not apply — so the gate
+          # would fall through and pass. Same fail-open, third route in.
+          if [ ! -f coverage.txt ]; then
+            echo "::error::forge coverage wrote no summary file — the gate has nothing to assert on."
             exit 1
           fi
-          echo "Solidity coverage: 100% lines / statements / branches / functions"
+          src_rows=$(grep -cE '^\| src/' coverage.txt || true)
+          total_rows=$(grep -cE '^\| Total' coverage.txt || true)
+          if [ "$src_rows" -eq 0 ] || [ "$total_rows" -ne 1 ]; then
+            echo "::error::Unrecognised forge coverage summary — the 100% gate matched no rows and asserted nothing. Fix the parser, do not delete the gate."
+            echo "expected: one or more lines starting '| src/', and exactly one starting '| Total'"
+            echo "found:    ${src_rows} src rows, ${total_rows} total rows"
+            echo "--- forge coverage --report summary ---"
+            cat coverage.txt
+            exit 1
+          fi
+          # Prints any row carrying a percentage cell that is not exactly
+          # 100.00%. Every cell on the row is examined; one short metric is
+          # enough to select it.
+          below=$(grep -E '^\| (src/|Total)' coverage.txt | awk -F'|' '
+            {
+              for (i = 1; i <= NF; i++) {
+                cell = $i
+                gsub(/^[ \t]+|[ \t]+$/, "", cell)
+                if (cell ~ /%/ && cell !~ /^100\.00%/) { print; next }
+              }
+            }')
+          if [ -n "$below" ]; then
+            echo "::error::Solidity coverage dropped below 100%"
+            printf '%s\n' "$below"
+            exit 1
+          fi
+          echo "Solidity coverage: 100% across ${src_rows} contract(s) — lines / statements / branches / functions"
+          # --- END COVERAGE GATE ---
 
   # Everything above must pass before the branch is considered shippable.
   # Note on scope: the on-chain integration proof (`pnpm spike`, `pnpm seed`,
@@ -254,10 +306,48 @@ jobs:
           path: .lighthouseci/
           retention-days: 7
 
+  submission:
+    name: Submission readiness — placeholders · links · assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Deliberately dependency-free and un-gated: the script is bash, grep and
+    # `git ls-files`, so it needs neither a node_modules nor any other job to
+    # have passed, and a judge-facing README that links FILL_YOUTUBE_URL is
+    # worth knowing about even on a run where the tests are red.
+    #
+    # It runs on a bare checkout ON PURPOSE. The placeholder scan walks the
+    # working tree, and coverage/, .lighthouseci/ and playwright-report/ are
+    # full of generated HTML; running this before any job could drop artifacts
+    # in the tree is what keeps the result a property of the repository rather
+    # than of whatever ran first.
+    #
+    # A hard gate, not a warning. Every check in it is deterministic — file
+    # existence, tracked-ness, and greps over committed text — with no network,
+    # no clock and no credentials, so it cannot flake; and the failure it
+    # catches is one that only ever shows up on submission day, when there is
+    # no time left to fix it.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Via the package script rather than `bash scripts/...` so the command a
+      # maintainer runs locally and the command CI runs are the same string.
+      # This script existed, passed, and was wired into nothing for its whole
+      # life — a check that never runs is documentation with a shebang.
+      - name: Submission readiness
+        run: pnpm check:submission
+
   gate:
     name: Ready to ship
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [quality, security, contracts, e2e, perf]
+    needs: [quality, security, contracts, e2e, perf, submission]
     steps:
-      - run: echo "quality, security and contract suites all green"
+      - run: echo "quality, security, contract, e2e, perf and submission suites all green"

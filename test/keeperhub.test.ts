@@ -375,23 +375,32 @@ describe('KeeperHub request shape', () => {
   })
 })
 
-describe('isSourceVerified', () => {
-  it('is true when the explorer has the ABI', async () => {
+describe('sourceVerification', () => {
+  it("is 'verified' when the explorer has the ABI", async () => {
     fetchMock.mockResolvedValue(response(200, { success: true, abi: [] }))
-    expect(await run(kh().isSourceVerified('0xabc'))).toBe(true)
+    expect(await run(kh().sourceVerification('0xabc'))).toBe('verified')
   })
 
-  it('is false when the source is unverified', async () => {
+  it("is 'unverified' when the explorer says the source is not verified", async () => {
     fetchMock.mockResolvedValue(
       response(200, { success: false, error: 'Contract source code is not verified' }),
     )
-    expect(await run(kh().isSourceVerified('0xabc'))).toBe(false)
+    expect(await run(kh().sourceVerification('0xabc'))).toBe('unverified')
   })
 
-  it('fails CLOSED — a lookup failure must not read as verified', async () => {
-    // Failing open here would silently disable threat rule 1.
+  it("is 'unknown' — NOT 'unverified' — when the lookup fails", async () => {
+    // The distinction this method exists for. Collapsed into a boolean, an
+    // explorer outage read as "unverified" for every spender at once, and
+    // `fired: !verified` in rules.ts turned that into a rule firing on every
+    // unlimited approval in the wallet simultaneously. Answering 'unknown'
+    // is what lets the rule abstain instead of revoking the whole wallet.
     fetchMock.mockImplementation(() => Promise.resolve(response(500, { error: 'explorer down' })))
-    expect(await run(kh().isSourceVerified('0xabc'))).toBe(false)
+    expect(await run(kh().sourceVerification('0xabc'))).toBe('unknown')
+  })
+
+  it("is 'unknown' when the network is unreachable, not merely when the API errors", async () => {
+    fetchMock.mockImplementation(() => Promise.reject(new Error('ECONNRESET')))
+    expect(await run(kh().sourceVerification('0xabc'))).toBe('unknown')
   })
 })
 

@@ -1,0 +1,13 @@
+{
+  "$comment": "Spenders the OPERATOR has explicitly blessed. An allow-listed spender is never revoked autonomously: the exposure is still detected, still evaluated by every rule, and still reported — as a HOLD, so a human can revoke it through the MCP revoke_approval tool with confirm: true — but the unattended loop will not sign for it. This is the list that stops the agent from tearing out the routers its own wallet trades through when a detection input misbehaves. What belongs here: the DEX routers, aggregators, lending pools and settlement contracts this wallet's strategy actually depends on, plus any counterparty whose approval breaking would take the wallet offline. What does NOT belong here: an address you merely have not investigated. An entry is a standing instruction to withhold action, so every one carries the reason it was blessed and who blessed it. Addresses are matched case-insensitively. REVOKER_ALLOWLIST (comma-separated) adds to this file without editing it.",
+  "updated": "2026-08-08",
+  "addresses": [
+    {
+      "address": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+      "chainId": 11155111,
+      "label": "Permit2 (canonical, all chains)",
+      "reason": "The single ERC-20 approval that enables every Permit2 allowance for a token. Revoking it breaks Uniswap and every router that settles through Permit2, for the whole wallet, at once. Downstream Permit2 grants are still revoked surgically via lockdown(); this upstream root is not something an unattended process should ever amputate. Held here as well as by the upstream-permit2-approval rule, deliberately: the structural hold and the operator's own list are independent reasons, and the address that must never be autonomously revoked should not depend on exactly one of them staying correct.",
+      "source": "protocol"
+    }
+  ]
+}

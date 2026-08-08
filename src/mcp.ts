@@ -13,7 +13,7 @@ import {
   readChainTimeSeconds,
   tokenSymbol,
 } from './chain.js'
-import { config } from './config.js'
+import { config, loadAllowlist } from './config.js'
 import { KeeperHub, type SimulationResult } from './keeperhub.js'
 import {
   PERMIT2_ABI_JSON,
@@ -99,6 +99,13 @@ export interface McpContext {
   /** Tokens to look for Approval logs on — see fetchApprovals for why this is explicit. */
   tokens: readonly Address[]
   denylist: ReadonlySet<string>
+  /**
+   * Spenders the operator has explicitly blessed. The autonomous loop will not
+   * revoke them; this surface still reports them in full, and revoke_approval
+   * with confirm: true still works on them — that is the entire point of
+   * routing them through the hold channel rather than filtering them out.
+   */
+  allowlist: ReadonlySet<string>
   lookbackBlocks: bigint
 }
 
@@ -192,6 +199,11 @@ export function defaultContext(): McpContext {
     kh: new KeeperHub(),
     tokens: (watchlist[String(config.chainId)] ?? []).map((entry) => entry.address as Address),
     denylist: new Set((denylist.addresses ?? []).map((entry) => entry.address.toLowerCase())),
+    // Loaded through config.ts, the same call the watcher makes, so the two
+    // surfaces cannot disagree about which spenders are blessed. A dashboard
+    // that reported a different hold set from the loop that enforces it would
+    // be worse than no dashboard.
+    allowlist: loadAllowlist(),
     lookbackBlocks: LOOKBACK_BLOCKS,
   }
 }
@@ -370,6 +382,7 @@ async function explainErc20(
     currentBlock,
     kh: ctx.kh,
     denylist: ctx.denylist,
+    allowlist: ctx.allowlist,
   })
   return { exposure: toExposure(token, spender, symbol, allowance, balance), assessment }
 }
@@ -399,6 +412,7 @@ async function explainPermit2(
     currentBlock,
     kh: ctx.kh,
     denylist: ctx.denylist,
+    allowlist: ctx.allowlist,
     permit2: {
       expiration: allowance.expiration,
       nonce: allowance.nonce,

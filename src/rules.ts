@@ -10,7 +10,7 @@ import type { KeeperHub } from './keeperhub.js'
 import { PERMIT2_ADDRESS, PERMIT2_MAX_AMOUNT, isPermit2 } from './permit2.js'
 
 /**
- * Four concrete, auditable threat rules and one hold.
+ * Four concrete, auditable threat rules and two holds.
  *
  * Deliberately NOT an ML "maliciousness score". Every rule states a fact about
  * chain state that anyone can independently check, and every firing carries the
@@ -20,6 +20,22 @@ import { PERMIT2_ADDRESS, PERMIT2_MAX_AMOUNT, isPermit2 } from './permit2.js'
  * The tradeoff is stated plainly: a sophisticated spender that is verified,
  * aged, and absent from the deny-list will not trip any of these. That case is
  * out of scope, not silently mishandled.
+ *
+ * ── The invariant every rule here obeys ──────────────────────────────────────
+ *
+ * A rule may fire only on a fact it OBSERVED. A lookup that failed is not a
+ * fact, and the failure of a detection input must never be convertible into a
+ * verdict — in either direction. So there are exactly three outcomes, not two:
+ *
+ *   fired: true                     an observed fact says this is a threat
+ *   fired: false                    an observed fact says it is not
+ *   fired: false, indeterminate     nothing was observed; the rule abstained
+ *
+ * The third is not a shade of the second. It is reported with the remedy that
+ * would restore the rule, and no path may report the spender safe on the
+ * strength of it. See `indeterminate()` and `verificationOrAbstain()` below —
+ * and see keeperhub.ts → sourceVerification for what happened when this
+ * distinction was missing from the one type that needed it.
  */
 
 /**
@@ -59,6 +75,19 @@ export interface ThreatContext {
   currentBlock: bigint
   kh: KeeperHub
   denylist: ReadonlySet<string>
+  /**
+   * Spenders the operator has explicitly blessed — their own routers, pools and
+   * settlement contracts. Never a reason to suppress a rule: an allow-listed
+   * spender is evaluated exactly like any other and, if it is a threat, it is
+   * reported as one. It is a reason to withhold the unattended TRANSACTION, via
+   * the hold channel. See operatorAllowlisted.
+   *
+   * Optional so a read-only caller that has no operator context (a script
+   * checking one pair) does not have to invent one; absent means "no blessings",
+   * which can only ever make the agent more willing to act, never less. Every
+   * path that can actually sign supplies it — see watcher.ts and mcp.ts.
+   */
+  allowlist?: ReadonlySet<string>
   /** Set only for Permit2 exposures. See Permit2Facts. */
   permit2?: Permit2Facts
 }
@@ -80,6 +109,63 @@ export interface RuleVerdict {
   fired: boolean
   reason: string
   evidence: Record<string, unknown>
+}
+
+/**
+ * The verdict a rule returns when it could not establish the fact it needs.
+ *
+ * `fired: false` here does NOT mean "safe" and is never allowed to read as
+ * such: the evidence carries `indeterminate: true` and the remedy that would
+ * restore the rule, and the reason is prefixed INDETERMINATE so it survives
+ * being skimmed in a log. Extracted into one function because there are now
+ * four places that abstain and the discipline is the property being defended —
+ * a fifth that quietly omitted `indeterminate` would be indistinguishable, in
+ * the audit trail, from a rule that looked and found nothing.
+ */
+function indeterminate(
+  rule: string,
+  reason: string,
+  remedy: string,
+  evidence: Record<string, unknown> = {},
+): RuleVerdict {
+  return {
+    rule,
+    fired: false,
+    reason: `INDETERMINATE — ${reason}; rule abstained`,
+    evidence: { ...evidence, indeterminate: true, remedy },
+  }
+}
+
+/**
+ * The source-verification lookup, with the one answer that must never be acted
+ * on separated out.
+ *
+ * `'unknown'` means the ABI endpoint did not answer. Both rules that consult
+ * verification abstain on it, because the alternative — the behaviour this
+ * codebase actually shipped — is that a single explorer outage makes
+ * `fired: !verified` true for every unlimited approval in the wallet at the same
+ * instant, and an unattended agent revokes all of them. Detection inputs fail;
+ * a rule that converts a failed input into a firing verdict converts an outage
+ * into an attack.
+ */
+async function verificationOrAbstain(
+  ctx: ThreatContext,
+  ruleId: string,
+  evidence: Record<string, unknown>,
+): Promise<{ verified: boolean } | { abstained: RuleVerdict }> {
+  const verification = await ctx.kh.sourceVerification(ctx.spender)
+  if (verification === 'unknown') {
+    return {
+      abstained: indeterminate(
+        ruleId,
+        'source verification lookup failed — the explorer did not answer',
+        'retry once the KeeperHub ABI endpoint / block explorer is reachable; ' +
+          'this rule needs a POSITIVE answer either way and will not fire on a failed lookup',
+        { ...evidence, sourceVerification: verification },
+      ),
+    }
+  }
+  return { verified: verification === 'verified' }
 }
 
 export interface ThreatRule {
@@ -112,14 +198,20 @@ export const unlimitedToUnverified: ThreatRule = {
       }
     }
 
-    const verified = await ctx.kh.isSourceVerified(ctx.spender)
+    const lookup = await verificationOrAbstain(ctx, this.id, { allowance: sentinel.label })
+    if ('abstained' in lookup) return lookup.abstained
+
     return {
       rule: this.id,
-      fired: !verified,
-      reason: verified
+      fired: !lookup.verified,
+      reason: lookup.verified
         ? 'unlimited, but spender source is verified'
         : 'unlimited approval to an unverified contract',
-      evidence: { allowance: sentinel.label, sourceVerified: verified },
+      evidence: {
+        allowance: sentinel.label,
+        sourceVerified: lookup.verified,
+        sourceVerification: lookup.verified ? 'verified' : 'unverified',
+      },
     }
   },
 }
@@ -147,16 +239,12 @@ export const youngSpender: ThreatRule = {
         // Report inability to evaluate rather than reporting safety. An
         // archive RPC (point SEPOLIA_RPC_URL at one) restores this rule; without one it
         // abstains loudly and the other two rules still stand.
-        return {
-          rule: this.id,
-          fired: false,
-          reason: 'INDETERMINATE — RPC does not serve historical state; rule abstained',
-          evidence: {
-            indeterminate: true,
-            cutoffBlock: cutoff.toString(),
-            remedy: 'point SEPOLIA_RPC_URL at an archive node to enable this rule',
-          },
-        }
+        return indeterminate(
+          this.id,
+          'RPC does not serve historical state',
+          'point SEPOLIA_RPC_URL at an archive node to enable this rule',
+          { cutoffBlock: cutoff.toString() },
+        )
       }
       throw error
     }
@@ -269,16 +357,12 @@ export const permit2LongLived: ThreatRule = {
       // historical state. Without chain time there is no reference point for
       // "how long does this last", and answering "not a threat" would be a
       // claim about the chain we have no evidence for.
-      return {
-        rule: this.id,
-        fired: false,
-        reason: 'INDETERMINATE — chain timestamp unavailable; lifetime could not be measured',
-        evidence: {
-          indeterminate: true,
-          expiration: facts.expiration,
-          remedy: 'the latest block timestamp is required to compare against expiration',
-        },
-      }
+      return indeterminate(
+        this.id,
+        'chain timestamp unavailable — lifetime could not be measured',
+        'the latest block timestamp is required to compare against expiration',
+        { expiration: facts.expiration },
+      )
     }
 
     // Matches AllowanceTransfer exactly: it reverts on
@@ -306,11 +390,17 @@ export const permit2LongLived: ThreatRule = {
       }
     }
 
-    const verified = await ctx.kh.isSourceVerified(ctx.spender)
+    const lookup = await verificationOrAbstain(ctx, this.id, {
+      expiration: facts.expiration,
+      chainTimeSeconds,
+      secondsRemaining,
+    })
+    if ('abstained' in lookup) return lookup.abstained
+
     return {
       rule: this.id,
-      fired: !verified,
-      reason: verified
+      fired: !lookup.verified,
+      reason: lookup.verified
         ? 'long-lived Permit2 allowance, but spender source is verified'
         : `Permit2 allowance valid for another ${(secondsRemaining / 86_400).toFixed(2)} days on an unverified contract`,
       evidence: {
@@ -319,7 +409,8 @@ export const permit2LongLived: ThreatRule = {
         secondsRemaining,
         daysRemaining: Number((secondsRemaining / 86_400).toFixed(3)),
         nonce: facts.nonce,
-        sourceVerified: verified,
+        sourceVerified: lookup.verified,
+        sourceVerification: lookup.verified ? 'verified' : 'unverified',
       },
     }
   },
@@ -394,7 +485,63 @@ export const upstreamPermit2Approval: HoldRule = {
   },
 }
 
-export const ALL_HOLDS: readonly HoldRule[] = [upstreamPermit2Approval]
+/**
+ * Hold 2 — the spender is on the operator's own allow-list.
+ *
+ * The mirror image of the deny-list, and it exists because of what the rules
+ * actually key on. `young-spender` fires on any contract deployed in the last
+ * seven days; integrating a brand-new venue at launch is the single most normal
+ * thing a trading agent does. `unlimited-to-unverified` fires on any unlimited
+ * approval whose spender the explorer has not indexed yet — which is every
+ * router, for the first hours of its life. Both are correct rules and both
+ * describe a genuine risk, and both of them, pointed at an agent wallet's own
+ * infrastructure, describe the wallet working as intended.
+ *
+ * So an operator may state, in advance and in writing, which spenders their
+ * strategy depends on. That statement does NOT suppress detection: the rules
+ * still run, the exposure is still reported, the evidence is still on the
+ * record, and it is still offerable to a human through the MCP surface. It
+ * withholds exactly one thing — the unattended signature.
+ *
+ * Reported through the SAME hold channel as upstreamPermit2Approval rather than
+ * as a filter earlier in the pipeline, because a suppressed exposure and an
+ * absent exposure look identical in a log, and the difference between them is
+ * the entire safety argument.
+ *
+ * The tradeoff stated plainly: an operator who allow-lists a spender that later
+ * turns hostile has opted that spender out of autonomous protection. That is a
+ * decision they made explicitly, with the address in front of them, which is a
+ * categorically better failure than an agent that quietly decided the same
+ * thing on their behalf.
+ */
+export const operatorAllowlisted: HoldRule = {
+  id: 'operator-allowlisted',
+  description:
+    'Spender is on the operator-maintained allow-list — detected and reported, never revoked unattended',
+  evaluate(ctx): Promise<RuleVerdict> {
+    const allowlist = ctx.allowlist
+    const hit = allowlist !== undefined && allowlist.has(ctx.spender.toLowerCase())
+    return Promise.resolve({
+      rule: this.id,
+      fired: hit,
+      reason: hit
+        ? 'spender is operator-allowlisted — the exposure is real and is reported, but the unattended loop will not sign a revoke for it'
+        : 'spender is not operator-allowlisted',
+      evidence: hit
+        ? {
+            allowlistSize: allowlist.size,
+            allowance: ctx.allowance.toString(),
+            autonomousRevoke: false,
+            remedy:
+              'remove the address from data/allowlist.json (or REVOKER_ALLOWLIST) to let the agent act on it, ' +
+              'or revoke it now by hand through the MCP revoke_approval tool with confirm: true',
+          }
+        : { allowlistSize: allowlist?.size ?? 0 },
+    })
+  },
+}
+
+export const ALL_HOLDS: readonly HoldRule[] = [upstreamPermit2Approval, operatorAllowlisted]
 
 export interface ThreatAssessment {
   threat: boolean

@@ -167,12 +167,20 @@ and needs no auth — so it is free to disagree with the seed's own report.
 ```
 🚨 threat.detected   mUSDC  allowance=MAX_UINT256  atRisk=10000000000
                      rules=[unlimited-to-unverified, denylisted]
-↗  revoke.submit     method=check-and-execute
-✅ revoke.confirmed  0xc45a19a6…  allowanceAfter=0  sponsored=true
+↗  revoke.submit     method=check-and-execute  executionId=…
+✅ revoke.confirmed  0xc45a19a6…  executionId=…  allowanceAfter=0  sponsored=true
 ```
 
 No manual step happens between detection and revoke. Use `--dry-run` to watch it
 decide without executing.
+
+`executionId` is elided above because it is per-run — yours will differ. It is
+KeeperHub's own handle on the execution, and it is the field that makes
+"executed **via KeeperHub**" checkable instead of inferred: the explorer shows a
+relayer calling `approve`, while the execution record shows the *guarded*
+`check-and-execute` behind it. Both revoke paths write it into
+`audit/revoker.jsonl` on every stage — see
+[the executionId section in the README](./README.md#the-keeperhub-side-of-those-same-transactions--executionid).
 
 The allowance is now zero:
 
@@ -286,10 +294,10 @@ Revoker — arming the Permit2 threat scenario
 
 Two grants, because there are two layers:
 
-| Step | Transaction | What it does |
-|---|---|---|
-| upstream `approve(PERMIT2, MAX)` | [`0xa52cb025…5855a2`](https://sepolia.etherscan.io/tx/0xa52cb025170b45b58ba804ce6747aa0f9ae5ce87cdd66813688d8fd81c5855a2) | lets Permit2 move the token at all |
-| `Permit2.approve` | [`0xe978f12f…c73297`](https://sepolia.etherscan.io/tx/0xe978f12fb5fe7766b7659bb74569a9cfdb08ec3e4762c9eeaabb539a0c753297) | writes the downstream slot — this is the exposure |
+| Step | Block | Transaction | What it does |
+|---|---|---|---|
+| upstream `approve(PERMIT2, MAX)` | `11445297` | [`0xa52cb025…5855a2`](https://sepolia.etherscan.io/tx/0xa52cb025170b45b58ba804ce6747aa0f9ae5ce87cdd66813688d8fd81c5855a2) | lets Permit2 move the token at all |
+| `Permit2.approve` | `11445298` | [`0xe978f12f…c73297`](https://sepolia.etherscan.io/tx/0xe978f12fb5fe7766b7659bb74569a9cfdb08ec3e4762c9eeaabb539a0c753297) | writes the downstream slot — this is the exposure |
 
 Note that Permit2's "unlimited" is `type(uint160).max`, not `type(uint256).max`.
 
