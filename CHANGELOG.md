@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/edycutjong/revoker/compare/v1.3.1...v1.4.0) (2026-08-08)
+
+
+### Features
+
+* **site:** display face, real QR, GitHub marks, and the BUIDL link ([#16](https://github.com/edycutjong/revoker/issues/16)) ([d56ebb4](https://github.com/edycutjong/revoker/commit/d56ebb43f81cdbbaed9e6d82fafdd86dc7f958d5))
+
 ## [1.3.1](https://github.com/edycutjong/revoker/compare/v1.3.0...v1.3.1) (2026-08-08)
 
 
