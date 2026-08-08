@@ -84,7 +84,7 @@ KeeperHub — landing a real, linkable, state-changing transaction.
 
 ```mermaid
 flowchart TD
-    A["Approval / ApprovalForAll logs"] --> B[watcher]
+    A["ERC-20 Approval logs"] --> B[watcher]
     B --> C{3 threat rules}
     C -->|none fire| D["threat.cleared — keep watching"]
     C -->|any fires| E["KeeperHub<br/>POST /api/execute/check-and-execute"]
@@ -266,7 +266,7 @@ Full per-cycle transaction links: [BENCHMARK.md](./BENCHMARK.md).
 | Solidity | 42 | **100% coverage** — lines, statements, branches, functions. The drain **succeeds and takes zero** post-revoke; 5 fuzz suites |
 | **Total** | **86** | |
 
-CI runs three jobs behind a gate — quality (lint, types, coverage), security
+CI runs six jobs behind a gate — quality (lint, types, coverage), security
 (`pnpm audit`, gitleaks over full history, a credential grep that fails the
 build), and contracts (`forge build --sizes`, `forge test`).
 

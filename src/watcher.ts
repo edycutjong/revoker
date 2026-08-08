@@ -74,12 +74,6 @@ export class Watcher {
     this.stopped = true
   }
 
-  /**
-   * One full pass. Returns the revokes performed during this scan.
-   *
-   * Exposed separately from run() so the benchmark and tests can drive
-   * individual cycles deterministically instead of racing a timer.
-   */
   /** Configured watchlist plus anything KeeperHub reports the wallet holding. */
   private async resolveTokens(): Promise<Address[]> {
     const held = await this.kh.getHeldTokens()
