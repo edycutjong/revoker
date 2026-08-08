@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/edycutjong/revoker/compare/v1.5.2...v1.6.0) (2026-08-08)
+
+
+### Features
+
+* **ci:** src/ to 100% coverage, gate it, and stage the pipeline ([#26](https://github.com/edycutjong/revoker/issues/26)) ([1c4d19b](https://github.com/edycutjong/revoker/commit/1c4d19b1c1d4e1ede2f1060e5ed18770250babed))
+
 ## [1.5.2](https://github.com/edycutjong/revoker/compare/v1.5.1...v1.5.2) (2026-08-08)
 
 
