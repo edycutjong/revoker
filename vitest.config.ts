@@ -18,35 +18,45 @@ export default defineConfig({
       // summary — coverage that only exists inside a downloadable artifact is
       // coverage nobody ever looks at.
       reporter: ['text', 'json-summary', 'html'],
-      // Still reported across scripts/ as well, because a module at 0% is
-      // information rather than noise — but only src/ is gated. scripts/ are
+      // src/ and scripts/ are both measured and both gated. scripts/ are
       // one-shot operational entrypoints (seed arms a real approval, spike
-      // proves the integration, bench drives 25 live cycles); they need a funded
-      // wallet and a live API key, and mocking that away would leave a test that
-      // asserts nothing about the thing the script exists to do.
+      // proves the integration, bench drives 25 live cycles), so every external
+      // edge is mocked — but the tests assert the thing the script exists to do,
+      // not merely that its lines ran: seed's idempotency claim is proved by
+      // replaying run 1's written state into run 2 and asserting zero deploys,
+      // zero mints and zero approvals; bench's p50/p95 are asserted as exact
+      // arithmetic against a hand-wound clock, because a benchmark that reports
+      // the wrong percentile is worse than no benchmark; spike asserts the
+      // receipt is fetched for the hash KeeperHub returned rather than one the
+      // script already knew.
       include: ['src/**/*.ts', 'scripts/**/*.ts'],
       exclude: ['e2e/**', 'contracts/**', 'starter/**'],
-      // A ratchet, not an aspiration: pinned to what the suite actually achieves
-      // today, so the number can only be raised deliberately and never drifts
-      // down unnoticed. Solidity has been hard-gated at 100% since the start
+      // A ratchet, not an aspiration: pinned to what the suite actually achieves,
+      // so the number can only be raised deliberately and never drifts down
+      // unnoticed. Solidity has been hard-gated at 100% since the start
       // (ci.yml); TypeScript coverage was collected, uploaded and enforced
       // nowhere — a repo that gates one and quietly publishes the other invites
       // the obvious question.
+      //
+      // All four metrics now hold at 100 across both trees. Branches previously
+      // carried headroom at 94 because v8 counts branch paths slightly
+      // differently across Node builds (95.02-95.06% locally, 94.98% on CI) and
+      // pinning at the observed maximum turned that jitter into a red build.
+      // At full coverage that jitter disappears: the denominator may move
+      // between builds, but the numerator moves with it, so 100 is the one
+      // threshold that cannot flake. Any drop is a real regression.
       thresholds: {
         'src/**/*.ts': {
-          // Statements, functions and lines are exact counts and hold at 100 —
-          // no headroom needed, and any drop is a real regression.
           statements: 100,
           functions: 100,
           lines: 100,
-          // Branches gets headroom deliberately. v8 counts branch paths slightly
-          // differently across Node builds: this suite measures 95.02-95.06%
-          // locally and 94.98% on the CI runner, and pinning the threshold at
-          // the observed maximum turned that 0.04% of jitter into a red build.
-          // A gate that fails without the code changing is a gate people learn
-          // to re-run rather than read. 94 still catches any real regression —
-          // the smallest uncovered branch here is worth more than a point.
-          branches: 94,
+          branches: 100,
+        },
+        'scripts/**/*.ts': {
+          statements: 100,
+          functions: 100,
+          lines: 100,
+          branches: 100,
         },
       },
     },

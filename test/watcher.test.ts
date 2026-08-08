@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Address } from 'viem'
@@ -14,6 +14,8 @@ import type { Address } from 'viem'
  * otherwise reach for a real RPC. revoke.ts is mocked so the decision to revoke
  * can be observed without executing one — this suite is about the loop's
  * judgement, not about the transaction (test/revoke.test.ts covers that).
+ * keeperhub.ts is mocked because a watcher built without one constructs its
+ * own, which would demand credentials this suite has no business holding.
  */
 
 const MAX = (1n << 256n) - 1n
@@ -30,10 +32,14 @@ const chain = vi.hoisted(() => ({
 }))
 const revoke = vi.hoisted(() => ({ revokeApproval: vi.fn() }))
 const rules = vi.hoisted(() => ({ assess: vi.fn() }))
+const keeperhub = vi.hoisted(() => ({
+  KeeperHub: vi.fn(() => ({ getHeldTokens: vi.fn().mockResolvedValue([]) })),
+}))
 
 vi.mock('../src/chain.js', () => chain)
 vi.mock('../src/revoke.js', () => revoke)
 vi.mock('../src/rules.js', () => rules)
+vi.mock('../src/keeperhub.js', () => keeperhub)
 
 let dir: string
 
@@ -56,6 +62,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   rmSync(dir, { recursive: true, force: true })
   delete process.env['REVOKER_AUDIT_LOG']
 })
@@ -69,6 +76,14 @@ function makeKh() {
   return { getHeldTokens: vi.fn().mockResolvedValue([]) } as never
 }
 
+/** The audit trail this scan wrote, one parsed object per line. */
+function readEntries(): Record<string, unknown>[] {
+  return readFileSync(join(dir, 'audit.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((l) => JSON.parse(l) as Record<string, unknown>)
+}
+
 async function makeWatcher(overrides: Record<string, unknown> = {}) {
   const { Watcher } = await import('../src/watcher.js')
   return new Watcher({
@@ -79,6 +94,69 @@ async function makeWatcher(overrides: Record<string, unknown> = {}) {
     ...overrides,
   })
 }
+
+describe('Watcher — option defaults', () => {
+  it('builds its own KeeperHub, and hands that one to the rules and the revoke', async () => {
+    // src/index.ts constructs the watcher without a hub. If the default were
+    // ever a different instance from the one the rules see, a revoke would be
+    // decided against one wallet and executed through another.
+    const { Watcher } = await import('../src/watcher.js')
+    const w = new Watcher({ owner: OWNER })
+
+    await w.scan()
+
+    expect(keeperhub.KeeperHub).toHaveBeenCalledTimes(1)
+    const built = keeperhub.KeeperHub.mock.results[0]?.value
+    expect((rules.assess.mock.calls[0]?.[0] as { kh?: unknown }).kh).toBe(built)
+    expect((revoke.revokeApproval.mock.calls[0]?.[0] as { kh?: unknown }).kh).toBe(built)
+  })
+
+  it('watches nothing but the held tokens, deny-lists nothing, and still executes', async () => {
+    // The bare options object: no watchlist, no denylist, no dryRun. Each of
+    // those defaulting to undefined instead of empty would throw on the spread
+    // — or, for dryRun, silently turn a live agent into a reporting one.
+    const { Watcher } = await import('../src/watcher.js')
+    const w = new Watcher({ owner: OWNER })
+
+    await w.scan()
+
+    // 5_000n back from the head, the documented default lookback
+    expect(chain.fetchApprovals).toHaveBeenCalledWith(OWNER, [], 11_438_000n, 11_443_000n)
+    expect(rules.assess).toHaveBeenCalledWith(expect.objectContaining({ denylist: new Set() }))
+    expect(revoke.revokeApproval).toHaveBeenCalledTimes(1)
+  })
+
+  it('polls every 5s when no interval is given', async () => {
+    rules.assess.mockResolvedValue({ threat: false, fired: [], all: [{ rule: 'denylisted', fired: false }] })
+    vi.useFakeTimers()
+    const { Watcher } = await import('../src/watcher.js')
+    const w = new Watcher({ owner: OWNER })
+
+    const running = w.run()
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(chain.publicClient.getBlockNumber).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(chain.publicClient.getBlockNumber).toHaveBeenCalledTimes(2)
+
+    w.stop()
+    await vi.advanceTimersByTimeAsync(5_000)
+    await running
+  })
+})
+
+describe('Watcher.scan — the lookback window', () => {
+  it('starts at block 0 when the lookback reaches past the head of the chain', async () => {
+    // On a young testnet the head is inside the window. Subtracting anyway
+    // would ask the RPC for a negative fromBlock and fail every scan.
+    chain.publicClient.getBlockNumber.mockResolvedValue(4_200n)
+    const w = await makeWatcher({ lookbackBlocks: 10_000n })
+
+    await w.scan()
+
+    expect(chain.fetchApprovals).toHaveBeenCalledWith(OWNER, [TOKEN], 0n, 4_200n)
+  })
+})
 
 describe('Watcher.scan — the revoke decision', () => {
   it('revokes an exposure whose rules fire', async () => {
@@ -160,6 +238,41 @@ describe('Watcher.scan — the revoke decision', () => {
     const call = revoke.revokeApproval.mock.calls[0]?.[0] as { idempotencyKey?: string }
     expect(call.idempotencyKey).toMatch(/^revoke-.+:.+-\d+$/)
   })
+
+  it('touches no exposure once it has been stopped', async () => {
+    // stop() can land while a scan is already in flight — from the maxRevokes
+    // cap, or from a shutdown signal. It must take effect before the next
+    // exposure, not after the whole batch has been revoked.
+    const w = await makeWatcher()
+    w.stop()
+
+    expect(await w.scan()).toHaveLength(0)
+    expect(chain.readAllowance).not.toHaveBeenCalled()
+    expect(revoke.revokeApproval).not.toHaveBeenCalled()
+  })
+})
+
+describe('Watcher.scan — what the audit trail says was at risk', () => {
+  it('names an unlimited allowance MAX_UINT256 rather than printing 78 digits', async () => {
+    const w = await makeWatcher()
+    await w.scan()
+
+    const detected = readEntries().find((e) => e.stage === 'threat.detected')
+    expect(detected).toMatchObject({ allowance: 'MAX_UINT256', symbol: 'mUSDC' })
+  })
+
+  it('records a finite allowance as the number it actually is', async () => {
+    // A capped approval is a different story after the fact — labelling it
+    // MAX_UINT256 would overstate the exposure in the one record that exists
+    // to justify the revoke.
+    chain.readAllowance.mockResolvedValue(250_000_000n)
+    const w = await makeWatcher()
+
+    await w.scan()
+
+    const detected = readEntries().find((e) => e.stage === 'threat.detected')
+    expect(detected).toMatchObject({ allowance: '250000000', atRisk: '10000000000' })
+  })
 })
 
 describe('Watcher.scan — dry run', () => {
@@ -210,6 +323,21 @@ describe('Watcher.run — surviving a bad day', () => {
     await w.run()
 
     expect(revoke.revokeApproval).toHaveBeenCalledTimes(1)
+  })
+
+  it('records what was thrown even when it was not an Error', async () => {
+    // Rejections from a fetch stack are not always Errors: a bare string or a
+    // response object would land as "undefined" in the audit trail, leaving no
+    // trace of why the agent skipped a cycle.
+    chain.publicClient.getBlockNumber
+      .mockRejectedValueOnce('RPC returned 503')
+      .mockResolvedValue(11_443_000n)
+
+    const w = await makeWatcher({ pollIntervalMs: 1, maxRevokes: 1 })
+    await w.run()
+
+    const failed = readEntries().find((e) => e.error !== undefined)
+    expect(failed).toMatchObject({ stage: 'scan', error: 'RPC returned 503' })
   })
 
   it('stop() ends the loop', async () => {

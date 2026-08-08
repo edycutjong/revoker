@@ -109,7 +109,7 @@ vi.mock('node:fs', async (importOriginal) => {
   }
 })
 
-function makeReq(url: string): IncomingMessage {
+function makeReq(url?: string): IncomingMessage {
   const emitter = new EventEmitter()
   return Object.assign(emitter, { url }) as unknown as IncomingMessage
 }
@@ -183,6 +183,26 @@ describe('server.ts — startup', () => {
     expect(httpMock.serverInstance.close).toHaveBeenCalledTimes(1)
   })
 
+  it('listens on $PORT when it is set', async () => {
+    process.env['PORT'] = '4321'
+
+    await loadServer()
+
+    expect(httpMock.serverInstance.listen).toHaveBeenCalledWith(4321, expect.any(Function))
+    const logged = vi.mocked(console.log).mock.calls.map((c: unknown[]) => String(c[0]))
+    expect(logged).toContain('  http://localhost:4321/verify')
+  })
+
+  it('falls back to port 3000 when $PORT is unset', async () => {
+    delete process.env['PORT']
+
+    await loadServer()
+
+    expect(httpMock.serverInstance.listen).toHaveBeenCalledWith(3000, expect.any(Function))
+    const logged = vi.mocked(console.log).mock.calls.map((c: unknown[]) => String(c[0]))
+    expect(logged).toContain('  http://localhost:3000/verify')
+  })
+
   it('loads watchlist/denylist addresses into the Watcher for a valid, well-formed file', async () => {
     await loadServer()
 
@@ -206,6 +226,21 @@ describe('server.ts — startup', () => {
   it('degrades to [] when watchlist/denylist files contain malformed JSON', async () => {
     fsState.watchlist = '{ not valid json'
     fsState.denylist = '{ also not valid'
+
+    await loadServer()
+
+    const instance = watcherMock.instances.at(-1)
+    expect(instance?.options.tokens).toEqual([])
+    expect(instance?.options.denylist).toEqual([])
+  })
+
+  it('degrades to [] when the files parse but hold nothing for this chain', async () => {
+    // Well-formed JSON, wrong shape: a mainnet-only watchlist and a denylist
+    // with no `addresses` key at all. Neither may leak into a sepolia run.
+    fsState.watchlist = JSON.stringify({
+      '1': [{ address: '0xMainnetOnly11111111111111111111111111111' }],
+    })
+    fsState.denylist = JSON.stringify({ version: 1 })
 
     await loadServer()
 
@@ -284,6 +319,18 @@ describe('server.ts — routing', () => {
       explorer: configMock.explorerBase,
       dryRun: false,
     })
+  })
+
+  it('a request with no url is treated as / and returns the dashboard HTML', async () => {
+    const listener = await loadServer()
+    const req = makeReq()
+    const res = makeRes()
+
+    listener(req, res as unknown as ServerResponse)
+
+    expect(res.writeHead).toHaveBeenCalledWith(200, { 'Content-Type': 'text/html; charset=utf-8' })
+    const realHtml = readFileSync(new URL('../public/verify.html', import.meta.url), 'utf8')
+    expect(res.end).toHaveBeenCalledWith(realHtml)
   })
 
   it('an unknown path returns 404', async () => {
@@ -374,6 +421,24 @@ describe('server.ts — /api/stream (SSE)', () => {
 
     const pushed = res.write.mock.calls.map((c: unknown[]) => c[0] as string)
     expect(pushed.some((frame) => frame.includes('"stage":"watch.start"'))).toBe(true)
+
+    req.emit('close')
+  })
+
+  it('caps replayed history at 200 entries, dropping the oldest first', async () => {
+    const listener = await loadServer()
+    const { audit } = await import('../src/audit.js')
+    for (let seq = 0; seq < 201; seq += 1) audit('watch.scan', { seq })
+
+    const req = makeReq('/api/stream')
+    const res = makeRes()
+    listener(req, res as unknown as ServerResponse)
+
+    const pushed = res.write.mock.calls.map((c: unknown[]) => c[0] as string)
+    expect(pushed).toHaveLength(200)
+    expect(pushed.some((frame) => frame.includes('"seq":0}'))).toBe(false)
+    expect(pushed[0]).toContain('"seq":1}')
+    expect(pushed.at(-1)).toContain('"seq":200}')
 
     req.emit('close')
   })
