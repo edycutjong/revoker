@@ -18,17 +18,17 @@
   [![Live Demo](https://img.shields.io/badge/🌐_Live-Demo-06b6d4?style=for-the-badge)](https://revoker.edycu.dev)
   [![Pitch Deck](https://img.shields.io/badge/📊_Pitch-Deck-f59e0b?style=for-the-badge)](https://revoker.edycu.dev/pitch.html)
   [![Demo Video](https://img.shields.io/badge/🎬_Demo-Video-ef4444?style=for-the-badge)](https://youtu.be/6q7XvVC5nK4)
-  [![BUIDL](https://img.shields.io/badge/DoraHacks-BUIDL-8b5cf6?style=for-the-badge)](https://dorahacks.io/buidl/47528)
   [![Agents Onchain](https://img.shields.io/badge/Hackathon-Agents_Onchain-6366f1?style=for-the-badge)](https://dorahacks.io/hackathon/agents-onchain)
+  [![BUIDL](https://img.shields.io/badge/DoraHacks-BUIDL-8b5cf6?style=for-the-badge)](https://dorahacks.io/buidl/47528)
 
   <br/>
 
-  ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white)
-  ![Node](https://img.shields.io/badge/Node_22-339933?style=flat&logo=node.js&logoColor=white)
+  [![TypeScript](https://img.shields.io/badge/TypeScript_5.7-3178C6?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+  [![Node](https://img.shields.io/badge/Node_22-339933?style=flat&logo=node.js&logoColor=white)](https://nodejs.org/)
   [![Execution layer: KeeperHub](https://img.shields.io/badge/⚡_Execution-KeeperHub-06b6d4?style=flat)](https://keeperhub.com)
-  ![Solidity](https://img.shields.io/badge/Solidity_0.8.28-363636?style=flat&logo=solidity&logoColor=white)
-  ![Foundry](https://img.shields.io/badge/Foundry-000000?style=flat)
-  ![Ethereum](https://img.shields.io/badge/Sepolia-3C3C3D?style=flat&logo=ethereum&logoColor=white)
+  [![Solidity](https://img.shields.io/badge/Solidity_0.8.28-363636?style=flat&logo=solidity&logoColor=white)](https://docs.soliditylang.org/en/v0.8.28/)
+  [![Foundry](https://img.shields.io/badge/Foundry-000000?style=flat)](https://book.getfoundry.sh/)
+  [![Ethereum](https://img.shields.io/badge/Sepolia-3C3C3D?style=flat&logo=ethereum&logoColor=white)](https://sepolia.etherscan.io/address/0x5E2e5Fd3aD7fDC9B94482930db8b5F45E439bab7)
   [![License](https://img.shields.io/badge/License-MIT-yellow)](https://opensource.org/licenses/MIT)
   [![CI](https://github.com/edycutjong/revoker/actions/workflows/ci.yml/badge.svg)](https://github.com/edycutjong/revoker/actions/workflows/ci.yml)
   [![Release](https://img.shields.io/github/v/release/edycutjong/revoker?display_name=tag&sort=semver&color=35d07f)](https://github.com/edycutjong/revoker/releases/latest)
