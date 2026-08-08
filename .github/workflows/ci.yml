@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A pushed-over run is wasted compute; cancel it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality — lint · types · unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests with coverage
+        run: pnpm test:coverage
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
+
+  security:
+    name: Security — dependencies · secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the secret scan can see every commit, not just HEAD.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Audit dependencies
+        run: pnpm audit --audit-level=high
+
+      - name: Scan git history for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assert no credentials are committed
+        run: |
+          # Belt and braces: an org API key or a raw private key must never
+          # reach this repo. Explorer links and tx hashes are expected and
+          # excluded, since they are 64-hex and would otherwise false-positive.
+          if git grep -InE 'kh_[A-Za-z0-9_-]{20,}|PRIVATE_KEY=0x[0-9a-fA-F]{64}' -- . \
+             | grep -vE 'etherscan\.io|deployTx|transactionHash|0x\.\.\.'; then
+            echo "::error::credential-shaped string found in tracked files"
+            exit 1
+          fi
+          echo "no credentials in tracked files"
+
+  contracts:
+    name: Contracts — build · test · fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install forge-std
+        working-directory: contracts
+        run: forge install foundry-rs/forge-std --no-git
+
+      - name: Build
+        working-directory: contracts
+        run: forge build --sizes
+
+      - name: Test
+        working-directory: contracts
+        run: forge test -vvv
+
+  # Everything above must pass before the branch is considered shippable.
+  # Note on scope: the on-chain integration proof (`pnpm spike`, `pnpm seed`,
+  # `pnpm bench`) is deliberately NOT run here. It needs a funded wallet and an
+  # organisation API key, and running it on every PR would spend real gas and
+  # leak credentials into CI. It is reproduced manually — see DEMO.md.
+  gate:
+    name: Ready to ship
+    runs-on: ubuntu-latest
+    needs: [quality, security, contracts]
+    steps:
+      - run: echo "quality, security and contract suites all green"

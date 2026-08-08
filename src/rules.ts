@@ -168,14 +168,16 @@ export const youngSpender: ThreatRule = {
 export const denylisted: ThreatRule = {
   id: 'denylisted',
   description: 'Spender appears on the community deny-list',
-  async evaluate(ctx): Promise<RuleVerdict> {
+  // Purely local — no await needed, but the interface is async so every rule
+  // can be evaluated uniformly in parallel.
+  evaluate(ctx): Promise<RuleVerdict> {
     const hit = ctx.denylist.has(ctx.spender.toLowerCase())
-    return {
+    return Promise.resolve({
       rule: this.id,
       fired: hit,
       reason: hit ? 'spender is deny-listed' : 'spender not deny-listed',
       evidence: { denylistSize: ctx.denylist.size },
-    }
+    })
   },
 }
 

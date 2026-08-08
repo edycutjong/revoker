@@ -15,12 +15,22 @@
     "bench": "tsx scripts/bench.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "verify": "tsx src/server.ts"
+    "verify": "tsx src/server.ts",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test:coverage": "vitest run --coverage",
+    "contracts:build": "cd contracts && forge build",
+    "contracts:test": "cd contracts && forge test -vv",
+    "check": "pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm contracts:test"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.10.2",
+    "@vitest/coverage-v8": "^2.1.9",
+    "eslint": "^10.8.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
+    "typescript-eslint": "^8.66.0",
     "vitest": "^2.1.8"
   },
   "dependencies": {

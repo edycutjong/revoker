@@ -85,11 +85,21 @@ const STAGE_LABEL: Record<AuditStage, string> = {
   'revoke.skipped': '⏭',
 }
 
+function formatValue(value: unknown): string {
+  if (value === null || value === undefined) return String(value)
+  if (typeof value === 'object') return JSON.stringify(value)
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return value.toString()
+  }
+  return JSON.stringify(value) ?? '?'
+}
+
 export function logLine(entry: AuditEntry): void {
   const { ts, stage, ...rest } = entry
   const time = ts.slice(11, 19)
   const detail = Object.entries(rest)
-    .map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : String(v)}`)
+    .map(([k, v]) => `${k}=${formatValue(v)}`)
     .join(' ')
   console.log(`${time} ${STAGE_LABEL[stage]} ${stage.padEnd(17)} ${detail}`)
 }

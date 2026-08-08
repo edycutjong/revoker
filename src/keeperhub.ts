@@ -125,7 +125,7 @@ export class KeeperHub {
 
     const detail =
       parsed && typeof parsed === 'object' && 'error' in parsed
-        ? String((parsed as { error: unknown }).error)
+        ? JSON.stringify(parsed.error)
         : response.statusText
     throw new KeeperHubError(`KeeperHub ${response.status} on ${path}: ${detail}`, response.status, parsed)
   }
