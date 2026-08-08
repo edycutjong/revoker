@@ -119,7 +119,7 @@
       <text class="sans" x="50" y="146" font-size="18" fill="#9aa3b2">The agent that lands the revoke</text>
       <text class="sans" x="50" y="170" font-size="18" fill="#9aa3b2">before the drainer moves.</text>
 
-      <text class="mono metric" x="50" y="214" font-size="16" font-weight="700" fill="#4ea1ff">12.95s median detect &#8594; revoke &#183; 25/25 cycles</text>
+      <text class="mono metric" x="50" y="214" font-size="16" font-weight="700" fill="#4ea1ff">13.47s median detect &#8594; revoke &#183; 25/25 cycles</text>
       <text class="mono" x="50" y="240" font-size="13" fill="#8b94a4">3 threat rules &#183; 86 tests &#183; 46,482 gas per revoke</text>
       <text class="mono" x="50" y="266" font-size="13" fill="#5d6878">TypeScript &#183; Solidity &#183; KeeperHub &#183; Sepolia</text>
     </g>

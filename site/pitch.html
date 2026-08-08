@@ -667,8 +667,8 @@ h2{font-size:72px; line-height:1.06}
     <p class="eyebrow">Reliability &middot; 25 full cycles against live Sepolia</p>
     <h2>Measured, not claimed.</h2>
     <div class="statband">
-      <div class="stat"><span class="stat-v">12.95<span class="unit">s</span></span><span class="stat-l">median detect &rarr; revoke</span></div>
-      <div class="stat"><span class="stat-v">24.88<span class="unit">s</span></span><span class="stat-l">p95</span></div>
+      <div class="stat"><span class="stat-v">13.47<span class="unit">s</span></span><span class="stat-l">median detect &rarr; revoke</span></div>
+      <div class="stat"><span class="stat-v">25.17<span class="unit">s</span></span><span class="stat-l">p95</span></div>
       <div class="stat"><span class="stat-v">25<span class="unit">/25</span></span><span class="stat-l">cycles succeeded</span></div>
       <div class="stat"><span class="stat-v">46,482</span><span class="stat-l">gas per revoke (p50 = p95)</span></div>
     </div>
@@ -682,7 +682,7 @@ h2{font-size:72px; line-height:1.06}
       <span><b>86</b> tests — 44 TypeScript &middot; 42 Solidity</span>
       <span><b>100%</b> Solidity coverage — lines &middot; statements &middot; branches &middot; functions</span>
     </div>
-    <aside class="speaker-notes">Reliability, measured: twenty-five out of twenty-five cycles, 12.95 seconds median, gas identical at the p50 and p95. The amber bars are four consecutive cycles that hit a slow block window — that's the network, and we report the distribution instead of averaging it away. Behind it: 86 tests and 100 percent Solidity coverage on every axis.</aside>
+    <aside class="speaker-notes">Reliability, measured: twenty-five out of twenty-five cycles, 13.47 seconds median, gas identical at the p50 and p95. The amber bars are four consecutive cycles that hit a slow block window — that's the network, and we report the distribution instead of averaging it away. Behind it: 86 tests and 100 percent Solidity coverage on every axis.</aside>
   </section>
 
   <!-- ═══════════════ 10 · LIMITS ═══════════════ -->
@@ -777,31 +777,31 @@ h2{font-size:72px; line-height:1.06}
 
   /* ---------- benchmark chart: real per-cycle data from BENCHMARK.md ---------- */
   var CYCLES = [
-    [12.06,'0x77f6e43f9a701c52a4a0472a719be6307e4f760e9d03b7d54f615da25856dbf9'],
-    [12.47,'0x5f7bba9dc09d0bf99be82e5d7a905d330ea50e33b7c6cd94ba095a8de46dc25f'],
-    [11.91,'0xf7a3a9cd28bbc62b111b7bc5c53a718b8fb664803b695a9a567a31ff5910765d'],
-    [13.60,'0x2ab6e0c9493f241ca66a198ca885ae7fe7b493064c34a8c0dd4c832c0972f5db'],
-    [12.40,'0x35a469b8b8a2e8256acb4da9c834e67b8ef97275fb395b5b1faedda26f9ede96'],
-    [10.33,'0xebc4b3285721123ccd84d426a55f0a4094cab117781a57e1453af016fc48a065'],
-    [13.41,'0x72167a29f8f5fd5e4093c1e6d5b28372717bd2ad12d0f46b93a08ed5692ed7f4'],
-    [12.59,'0x368586b9188b2c264c8fe3379f174d507fba2951799033f259cd63fa35bcd712'],
-    [13.27,'0x4a5962c0ce9bdb36732c205000ec6c62f1ff31f3e1df469cd68126ede7e52912'],
-    [24.95,'0xd831c52d270f53fc0c2b8de7a7c31850fb83c29e8c1b4b1e28bd938ede6b8be5'],
-    [22.60,'0x5f9b3ad9021d8f486a2b25bafc37aba9fc26480c52ff6587575241b4324ed774'],
-    [23.48,'0x626d893f26de7512e54d5db913ab6941205e76d9c1b8861b91d1af73efc6478b'],
-    [24.88,'0x66ded1b5548c0cb46c531577ed1a0cc873a24f28380646f23d12b2ddb3864829'],
-    [12.95,'0xbb3d8c34b5dc10b8df1d707316b821274e3862327a616b86d0fa15149d1acdde'],
-    [12.86,'0xafc93446a6a003b7442ba617b82056b1604a63aa1ff7c8e122a2f9b699ddcffb'],
-    [12.77,'0x7bd1b54d4d00ffb9659bdb6c6e8347c85837ba78507beba6289e703d8bf62cfd'],
-    [12.74,'0xf65640d824434ccc491cd51a3825259a3825ccb86c6115075066fbf33669d75b'],
-    [13.60,'0x0f628f80aa686cc0390a0ef4ba06fd1ba8531f7616e2acc37b690ad5303f0393'],
-    [12.71,'0xd8769ad2319528bc7157964b289d80b382c62814447c5e4e6a35177e4a646475'],
-    [12.82,'0x12eb7240c2f7a6c76a5b26fb2c928b79caf0cb7865031c154e36fe8a66483e6c'],
-    [12.63,'0x9b01908d6c60332d5492d614b1bb0a62ee119e60bf058ff1fa0c89035c64f5fd'],
-    [13.62,'0x68a3be305e911322f5b3275a7cc8eacccb8a408dbc646384fd5d236180f878d8'],
-    [13.33,'0x7fba3a082c7ed7b5fb6cf6bafff1e8e4c05fccbc925e517ea3008806e03bcf6e'],
-    [13.40,'0xfe63a209b9d8a1615525eb6c71a79b4539d6099f5c7bc2657412230bb87e23fa'],
-    [13.72,'0xd07984bc414c3eda85230ab80893ebf1e7c7f04996b23393c78045e0027204fc']
+    [25.17,'0x3bd33bbb4b379f8ec746d7e0b3205565f74a951da1a874a5893a56b5b29fd390'],
+    [12.21,'0x2c11419b27756413bc484661b02a0c441280adbe365e430c48f0e4b2b29358d6'],
+    [13.52,'0x2347c5feceeca5ed848b6c181f5aa56cf259c69185021ce4f9e2a29cac953b32'],
+    [13.55,'0x9efd85d2b3d009024928ce151dc948fdabd0ec91d98fc7bafe14a1dcbe8a41c5'],
+    [12.55,'0xd22687088d58c27c2bc84336f6bc962bf8e97b5559f5705c18b5bff2394985ce'],
+    [13.38,'0xb7ea0fbdbc5da30b445cb640ffd4135471b68b772ac2366b958b3721c98437ee'],
+    [13.34,'0xb49e51883099c7ebe1f8acc8c6cf43f297b0a97a464687f0a50c568d8502eeb6'],
+    [13.47,'0x60ff32ebe82285e6a57b03c754fc18dbc7baed61586e919e7d5666fb71c07ec9'],
+    [13.49,'0xd5ac191f8a552a883e59f396006b8adcdb19b81430f961a5589f9b2c454e1146'],
+    [13.55,'0x4db55891e703f41e10d5af8577c8a0c2becd2649a2291e4b9e5d68b46de94a59'],
+    [14.91,'0x7e9a228797c97449bbec544332c3495d1b3d3c2d39d5f5d6dac73caebb903a40'],
+    [12.72,'0xc205a58388b5e4228c596fabf4fc0d3b493f8fb2ebc10bc5c40f006964fc72e3'],
+    [26.55,'0xbc335472fad41e9d46958fe47b30290ba6e863c98d35133880662aac3a047feb'],
+    [9.31,'0xec2657bc0d4dc2bfb3acefa78ec29aeae252fb110f6463b5c82187a61ebe3513'],
+    [12.24,'0x9109fea7631d117eb3b33e27446dc79c1616a49e276f0c5ea8fd06058f4b61ca'],
+    [9.87,'0x97c38f118e42f8c3edbef64d0621251414ee57f23d8c25e2400916f862c43879'],
+    [13.15,'0x5965349b0d8b7ca1c653828e319466bcac94595c6c3fa30e69362ab510744b64'],
+    [24.39,'0xab8a4e7beef177d22048c119fe962d3d0ac981dd5dc12f834511e91f2ef01e25'],
+    [11.73,'0x69566a1df5e6a183a519ee6e3381743bf906f1f235484f00c46c88e741c0a776'],
+    [12.77,'0x551579937bc9519c3f8c5be1596a111e0406d1272782275dcdb6d71f959cfcc7'],
+    [11.90,'0x08eab4b20e414b11474a61c222182e06f5b351ff3aaa04a9e4dc1fbd44ac9275'],
+    [13.53,'0x88bdfc9aa60a9eb1268fa4d8e48f1eef8338b18a77b029e6aef32f9eec0a680f'],
+    [13.62,'0x15b32cbf62202bb1b4fae5f667a6fd45e635b0c60f355a0e504a014dc915bfe1'],
+    [13.78,'0x9b0452de80c5a1aba69bea56e324a4f4553d5dc6cd196b730f19aa6b09d4cd11'],
+    [13.55,'0x0beb79e87af655197afc3c441c28e6dd9c295c778fc03e69ae91a68dab6a5947']
   ];
   var MAX = 25.28;
   var bars = document.getElementById('bars');
@@ -809,7 +809,7 @@ h2{font-size:72px; line-height:1.06}
     var frame = document.getElementById('chart-frame');
     /* frame is 300px with 18px top / 14px bottom padding → plot area 268px,
        so a value v sits at bottom: (14 + v/MAX*268) / 300 of the frame */
-    [[12.95, 'p50 12.95s', false], [24.88, 'p95 24.88s', true]].forEach(function (r) {
+    [[13.47, 'p50 13.47s', false], [25.17, 'p95 25.17s', true]].forEach(function (r) {
       var line = document.createElement('div');
       line.className = 'refline';
       line.style.bottom = ((14 + r[0] / MAX * 268) / 300 * 100).toFixed(1) + '%';
