@@ -1,0 +1,169 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+import type { Address } from 'viem'
+
+// Only the chain-access primitives are mocked; the rule logic under test is
+// real, as are MAX_UINT256, blocksInDays and HistoricalStateUnavailable.
+vi.mock('../src/chain.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/chain.js')>('../src/chain.js')
+  return {
+    ...actual,
+    hasCodeAt: vi.fn(),
+    findDeploymentBlock: vi.fn(),
+  }
+})
+
+const { hasCodeAt, findDeploymentBlock, HistoricalStateUnavailable, MAX_UINT256 } = await import(
+  '../src/chain.js'
+)
+const { unlimitedToUnverified, youngSpender, denylisted, assess } = await import('../src/rules.js')
+import type { ThreatContext } from '../src/rules.js'
+import type { KeeperHub } from '../src/keeperhub.js'
+
+const TOKEN = '0x4facb5FD1682c4449cAD42b7590861f7eD5c88Cb' as Address
+const SPENDER = '0x8eBf8540EdE8e40CD94825C418758d4029D8892e' as Address
+const OWNER = '0x5E2e5Fd3aD7fDC9B94482930db8b5F45E439bab7' as Address
+const CURRENT_BLOCK = 11_440_000n
+
+function ctx(overrides: Partial<ThreatContext> = {}): ThreatContext {
+  return {
+    token: TOKEN,
+    spender: SPENDER,
+    owner: OWNER,
+    allowance: MAX_UINT256,
+    balance: 10_000_000_000n,
+    currentBlock: CURRENT_BLOCK,
+    kh: { isSourceVerified: vi.fn().mockResolvedValue(false) } as unknown as KeeperHub,
+    denylist: new Set<string>(),
+    ...overrides,
+  }
+}
+
+beforeEach(() => {
+  vi.mocked(hasCodeAt).mockReset()
+  vi.mocked(findDeploymentBlock).mockReset()
+})
+
+describe('rule: unlimited-to-unverified', () => {
+  it('fires on an unlimited approval to an unverified contract', async () => {
+    const verdict = await unlimitedToUnverified.evaluate(ctx())
+    expect(verdict.fired).toBe(true)
+    expect(verdict.evidence['sourceVerified']).toBe(false)
+  })
+
+  it('does NOT fire when the spender source is verified', async () => {
+    const kh = { isSourceVerified: vi.fn().mockResolvedValue(true) } as unknown as KeeperHub
+    const verdict = await unlimitedToUnverified.evaluate(ctx({ kh }))
+    expect(verdict.fired).toBe(false)
+  })
+
+  it('does NOT fire on a bounded allowance, and skips the verification lookup', async () => {
+    const isSourceVerified = vi.fn().mockResolvedValue(false)
+    const kh = { isSourceVerified } as unknown as KeeperHub
+    const verdict = await unlimitedToUnverified.evaluate(ctx({ allowance: 1_000_000n, kh }))
+    expect(verdict.fired).toBe(false)
+    // A bounded allowance is decided locally — no reason to spend an API call.
+    expect(isSourceVerified).not.toHaveBeenCalled()
+  })
+
+  it('treats one-below-MAX as bounded, not unlimited', async () => {
+    const verdict = await unlimitedToUnverified.evaluate(ctx({ allowance: MAX_UINT256 - 1n }))
+    expect(verdict.fired).toBe(false)
+  })
+})
+
+describe('rule: young-spender', () => {
+  it('fires when the contract did not exist at the 7-day cutoff', async () => {
+    vi.mocked(hasCodeAt).mockResolvedValue(false)
+    vi.mocked(findDeploymentBlock).mockResolvedValue(CURRENT_BLOCK - 7_200n) // ~1 day
+
+    const verdict = await youngSpender.evaluate(ctx())
+    expect(verdict.fired).toBe(true)
+    expect(verdict.evidence['ageDays']).toBeCloseTo(1, 1)
+  })
+
+  it('does NOT fire for a contract that predates the window', async () => {
+    vi.mocked(hasCodeAt).mockResolvedValue(true)
+    const verdict = await youngSpender.evaluate(ctx())
+    expect(verdict.fired).toBe(false)
+    // The cheap check decides it; the binary search must not run.
+    expect(findDeploymentBlock).not.toHaveBeenCalled()
+  })
+
+  it('abstains loudly when the node cannot serve historical state', async () => {
+    vi.mocked(hasCodeAt).mockRejectedValue(new HistoricalStateUnavailable(1n, new Error('pruned')))
+
+    const verdict = await youngSpender.evaluate(ctx())
+    // Critically: it must NOT report the spender as safe.
+    expect(verdict.fired).toBe(false)
+    expect(verdict.evidence['indeterminate']).toBe(true)
+    expect(verdict.reason).toContain('INDETERMINATE')
+  })
+
+  it('still reports the threat when only the exact age is unavailable', async () => {
+    vi.mocked(hasCodeAt).mockResolvedValue(false)
+    vi.mocked(findDeploymentBlock).mockRejectedValue(
+      new HistoricalStateUnavailable(1n, new Error('pruned')),
+    )
+
+    const verdict = await youngSpender.evaluate(ctx())
+    expect(verdict.fired).toBe(true)
+    expect(verdict.evidence['exactAgeUnavailable']).toBe(true)
+  })
+
+  it('propagates unexpected errors instead of swallowing them', async () => {
+    vi.mocked(hasCodeAt).mockRejectedValue(new Error('connection refused'))
+    await expect(youngSpender.evaluate(ctx())).rejects.toThrow('connection refused')
+  })
+})
+
+describe('rule: denylisted', () => {
+  it('fires on a deny-list hit', async () => {
+    const verdict = await denylisted.evaluate(ctx({ denylist: new Set([SPENDER.toLowerCase()]) }))
+    expect(verdict.fired).toBe(true)
+  })
+
+  it('matches case-insensitively', async () => {
+    const verdict = await denylisted.evaluate(ctx({ denylist: new Set([SPENDER.toLowerCase()]) }))
+    expect(verdict.fired).toBe(true)
+  })
+
+  it('does NOT fire for an address that is not listed', async () => {
+    const other = '0x000000000000000000000000000000000000dEaD'.toLowerCase()
+    const verdict = await denylisted.evaluate(ctx({ denylist: new Set([other]) }))
+    expect(verdict.fired).toBe(false)
+  })
+})
+
+describe('assess', () => {
+  it('reports a threat when any single rule fires', async () => {
+    vi.mocked(hasCodeAt).mockResolvedValue(true) // old contract, rule 2 quiet
+    const kh = { isSourceVerified: vi.fn().mockResolvedValue(true) } as unknown as KeeperHub
+
+    // Only the deny-list fires. That alone must be sufficient — requiring
+    // consensus would mean ignoring a confirmed drainer because it happened
+    // to be a verified, aged contract.
+    const assessment = await assess(ctx({ kh, denylist: new Set([SPENDER.toLowerCase()]) }))
+    expect(assessment.threat).toBe(true)
+    expect(assessment.fired.map((v) => v.rule)).toEqual(['denylisted'])
+  })
+
+  it('does NOT flag a benign spender: verified, aged, and not deny-listed', async () => {
+    vi.mocked(hasCodeAt).mockResolvedValue(true)
+    const kh = { isSourceVerified: vi.fn().mockResolvedValue(true) } as unknown as KeeperHub
+
+    const assessment = await assess(ctx({ kh, allowance: 1_000_000n }))
+    expect(assessment.threat).toBe(false)
+    expect(assessment.fired).toHaveLength(0)
+    expect(assessment.all).toHaveLength(3)
+  })
+
+  it('records every rule evaluated, not just the ones that fired', async () => {
+    vi.mocked(hasCodeAt).mockResolvedValue(true)
+    const assessment = await assess(ctx())
+    expect(assessment.all.map((v) => v.rule).sort()).toEqual([
+      'denylisted',
+      'unlimited-to-unverified',
+      'young-spender',
+    ])
+  })
+})

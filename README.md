@@ -130,12 +130,35 @@ KeeperHub surfaces used so far:
 
 ## Running it
 
-Requires Node 22+ and pnpm.
+Requires Node 22+, pnpm, and Foundry.
 
 ```bash
 pnpm install
-pnpm spike     # proves the KeeperHub integration end-to-end
+cd contracts && forge build && cd ..
+
+pnpm spike              # prove the KeeperHub integration end-to-end
+pnpm seed               # stage the threat (idempotent — safe to re-run)
+pnpm watch -- --once    # watch Revoker detect it and take it away
+pnpm test               # 15 tests
 ```
+
+`pnpm watch -- --dry-run` detects and reports without executing anything.
+
+### Threat rules
+
+| Rule | Fires when | Signal source |
+|---|---|---|
+| `unlimited-to-unverified` | `MAX_UINT256` allowance to a contract whose source is unreadable | KeeperHub ABI resolution |
+| `young-spender` | spender contract deployed < 7 days ago | `eth_getCode`, binary search |
+| `denylisted` | spender is on the known-bad list | `data/denylist.json` |
+
+Any one rule firing is sufficient — these are independent signals of different
+kinds, not weighted terms in a score. Requiring consensus would mean ignoring a
+confirmed deny-list hit because the contract happened to be verified.
+
+Every firing carries the evidence that produced it into the audit trail, so a
+revoke can be justified after the fact. Deliberately not an ML "maliciousness
+score": *the model said so* is not a defence when it is wrong.
 
 Credentials resolve from `process.env`, then `~/.config/keeperhub/env`, then a
 local `.env`. Nothing secret is ever committed.
@@ -153,6 +176,25 @@ SEPOLIA_RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
 > Turnkey account, so that account is necessarily both the watched wallet and
 > the revoke sender. The spike asserts your configured address matches the one
 > KeeperHub actually controls, and fails loudly if it does not.
+
+### Known limits, stated plainly
+
+**Token discovery requires an explicit watchlist** (`data/watchlist.json`). No
+public RPC will serve an address-less `eth_getLogs` over a useful block range —
+publicnode requires an address filter, 1rpc caps the range at 50 blocks — and
+KeeperHub's balances endpoint only covers a curated token registry. Production
+would resolve this set from an indexer. Revoker protects the tokens it is told
+to watch, rather than implying coverage it does not have.
+
+**`young-spender` needs an archive node.** `eth_getCode` at a block from last
+week is unanswerable on a pruning RPC. The rule returns `INDETERMINATE` and
+names the remedy instead of reporting "safe" — a threat rule that silently
+degrades into a rubber stamp is worse than one that admits it cannot see. Point
+`SEPOLIA_RPC_URL` at an archive node to enable it.
+
+**The threat model is narrow on purpose.** A spender that is verified, aged, and
+absent from the deny-list trips nothing. That case is out of scope, not silently
+mishandled.
 
 ---
 

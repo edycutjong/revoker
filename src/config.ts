@@ -88,6 +88,23 @@ export const config = {
   rpcUrl: read('SEPOLIA_RPC_URL') ?? 'https://ethereum-sepolia-rpc.publicnode.com',
 
   explorerBase: read('KH_EXPLORER_BASE') ?? 'https://sepolia.etherscan.io',
+
+  /**
+   * Throwaway testnet key used ONLY to deploy the demo fixtures and to act as
+   * the adversary in the demo. It is not the agent's key and never signs a
+   * revoke: Foundry/viem must sign deploys locally, and the Turnkey key cannot
+   * leave its enclave. Seeding is the only thing this is for.
+   */
+  get deployerPrivateKey(): `0x${string}` {
+    const value = require_(
+      'DEPLOYER_PRIVATE_KEY',
+      'Generate a throwaway testnet key with `cast wallet new` and fund it from the Turnkey wallet.',
+    )
+    if (!/^0x[0-9a-fA-F]{64}$/.test(value)) {
+      throw new Error('DEPLOYER_PRIVATE_KEY is not a valid 32-byte hex key')
+    }
+    return value as `0x${string}`
+  },
 } as const
 
 export function explorerTxUrl(hash: string): string {
