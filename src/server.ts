@@ -1,7 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { readFileSync } from 'node:fs'
+import { timingSafeEqual } from 'node:crypto'
 import { config } from './config.js'
-import { auditLogPath, onAudit, type AuditEntry } from './audit.js'
+import { audit, auditLogPath, onAudit, type AuditEntry } from './audit.js'
+import { KeeperHub } from './keeperhub.js'
+import { revokeApproval, revokePermit2Allowances } from './revoke.js'
 import { Watcher } from './watcher.js'
 
 /**
@@ -186,6 +189,286 @@ function loadDenylist(): string[] {
   }
 }
 
+/**
+ * ── POST /revoke — the KeeperHub workflow callback ───────────────────────────
+ *
+ * Revoker refuses to put the revoke itself in a visual workflow, and that
+ * refusal still stands: a workflow that reads an allowance in one node and
+ * writes `approve(spender, 0)` in the next has a gap between the two, and that
+ * gap is the exact TOCTOU race `check-and-execute` exists to close.
+ *
+ * What that argument never ruled out is a workflow doing the DETECTION and the
+ * ESCALATION and calling back here for the write. This endpoint is that seam.
+ * The workflow decides *when to ask*; the answer is still produced by
+ * revokeApproval()/revokePermit2Allowances() unchanged, which means the same
+ * server-side guarded write, the same escalation ladder, the same audit trail.
+ * Nothing about the atomic step moved into the workflow, so nothing about the
+ * atomicity claim changes: the read and the write remain one KeeperHub
+ * operation, and a workflow round-trip that happens strictly BEFORE that
+ * operation cannot open a window inside it. The worst a slow round-trip can do
+ * is make us ask late — and asking late is what the watcher's own polling loop
+ * already handles, because the condition is re-evaluated server-side at
+ * execution time regardless of how stale the caller's belief was.
+ *
+ * Security posture, stated plainly because this is a write endpoint on a
+ * long-lived process:
+ *
+ *   - It is armed ONLY when the agent itself is armed (see main()).
+ *   - It needs a shared secret that is not a new credential a reviewer has to
+ *     obtain: unset, the endpoint fails closed and says so.
+ *   - It cannot be aimed at a third party. There is no `owner` field — the
+ *     owner is always config.walletAddress, because KeeperHub signs for that
+ *     account and no other. A leaked secret buys an attacker the ability to
+ *     zero the operator's own approvals at the operator's own gas, which is a
+ *     nuisance, not a theft.
+ *   - A call for an allowance that is already zero costs nothing at all: the
+ *     server-side condition fails and no transaction is submitted.
+ */
+
+/**
+ * The shared secret, resolved once at load.
+ *
+ * An exported-but-blank variable is not a credential, so it is normalised to
+ * "unset" here rather than being accepted as a one-character-long password.
+ */
+const rawCallbackSecret = process.env['REVOKER_CALLBACK_SECRET'] ?? ''
+const CALLBACK_SECRET = rawCallbackSecret === '' ? undefined : rawCallbackSecret
+
+/** Enough for the four fields the workflow sends, and nothing like enough to be a payload. */
+const CALLBACK_BODY_LIMIT_BYTES = 4_096
+
+/**
+ * One approval event should produce one callback. Twenty a minute leaves room
+ * for a burst of genuine grants and for the workflow's own retries, while
+ * keeping a guessing attack on the secret to a rate at which it never finishes.
+ */
+const CALLBACK_MAX_PER_MINUTE = 20
+
+const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/
+const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/
+
+/** Sliding one-minute window of callback attempts, authenticated or not. */
+const callbackHits: number[] = []
+
+function callbackRateLimited(now: number): boolean {
+  while (callbackHits.length > 0 && now - callbackHits[0]! >= 60_000) callbackHits.shift()
+  if (callbackHits.length >= CALLBACK_MAX_PER_MINUTE) return true
+  callbackHits.push(now)
+  return false
+}
+
+/**
+ * timingSafeEqual throws on a length mismatch, and an exception is itself an
+ * observable side channel — so the lengths are compared first and the
+ * constant-time path still runs for everything that gets past it.
+ */
+function secretMatches(presented: string, expected: string): boolean {
+  const a = Buffer.from(presented)
+  const b = Buffer.from(expected)
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
+}
+
+/**
+ * Read the request body with a hard ceiling.
+ *
+ * Bounded on bytes actually received rather than on Content-Length: a header is
+ * a claim, and anything that can reach this port can lie in one.
+ */
+function readBody(req: IncomingMessage, limitBytes: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let body = ''
+    req.on('data', (chunk: Buffer | string) => {
+      // Already over the line — stop growing the buffer. The promise has
+      // settled; further chunks are the socket draining, not new information.
+      if (body.length > limitBytes) return
+      body += String(chunk)
+      if (body.length > limitBytes) reject(new Error('payload too large'))
+    })
+    req.on('end', () => resolve(body))
+    req.on('error', reject)
+  })
+}
+
+type RevokeVia = 'erc20' | 'permit2'
+
+interface CallbackRequest {
+  token: `0x${string}`
+  spender: `0x${string}`
+  via: RevokeVia
+  /** The Approval event's own transaction hash, when the workflow forwards it. */
+  txHash?: string
+}
+
+type ParsedCallback = { ok: true; value: CallbackRequest } | { ok: false; reason: string }
+
+/**
+ * Validate the pair before anything is spent on it.
+ *
+ * Every rejection names the field, because the consumer is a workflow node an
+ * operator is editing in a browser: "400" alone would send them to read this
+ * file to find out which of four strings they mistyped.
+ */
+function parseCallback(raw: string): ParsedCallback {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return { ok: false, reason: 'body is not valid JSON' }
+  }
+
+  if (typeof parsed !== 'object' || parsed === null) {
+    return { ok: false, reason: 'body must be a JSON object' }
+  }
+  const body = parsed as Record<string, unknown>
+
+  const token = body['token']
+  if (typeof token !== 'string' || !ADDRESS_RE.test(token)) {
+    return { ok: false, reason: 'token must be a 20-byte hex address' }
+  }
+
+  const spender = body['spender']
+  if (typeof spender !== 'string' || !ADDRESS_RE.test(spender)) {
+    return { ok: false, reason: 'spender must be a 20-byte hex address' }
+  }
+
+  // ERC-20 is the default because it is the path the Approval-event trigger
+  // fires on; Permit2 has to be asked for explicitly.
+  const via = body['via'] ?? 'erc20'
+  if (via !== 'erc20' && via !== 'permit2') {
+    return { ok: false, reason: "via must be 'erc20' or 'permit2'" }
+  }
+
+  const txHash = body['txHash']
+  if (txHash !== undefined && (typeof txHash !== 'string' || !TX_HASH_RE.test(txHash))) {
+    return { ok: false, reason: 'txHash must be a 32-byte hex transaction hash' }
+  }
+
+  return {
+    ok: true,
+    value: {
+      token: token as `0x${string}`,
+      spender: spender as `0x${string}`,
+      via,
+      ...(txHash === undefined ? {} : { txHash }),
+    },
+  }
+}
+
+/**
+ * RevokeOutcome carries bigint allowances, and JSON.stringify THROWS on a
+ * bigint rather than skipping it — so without this a confirmed revoke would
+ * answer the workflow with a dropped socket. A replacer rather than a rebuilt
+ * object, so fields added to the outcome later are covered without being listed.
+ */
+function jsonSafe(_key: string, value: unknown): unknown {
+  return typeof value === 'bigint' ? value.toString() : value
+}
+
+function sendJson(res: ServerResponse, status: number, payload: unknown): void {
+  res.writeHead(status, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify(payload, jsonSafe))
+}
+
+/**
+ * Refuse, on the record.
+ *
+ * A rejected callback goes through the same audit trail as everything else:
+ * somebody probing the revoke endpoint of a security agent is exactly the kind
+ * of thing the operator should see on /verify, not something to swallow.
+ */
+function refuseCallback(res: ServerResponse, status: number, error: string): void {
+  audit('watch.error', { endpoint: 'POST /revoke', status, reason: error })
+  sendJson(res, status, { ok: false, error })
+}
+
+async function handleRevokeCallback(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (req.method !== 'POST') return refuseCallback(res, 405, 'POST only')
+
+  // Bucketed BEFORE the secret is looked at. The attack that matters here is
+  // guessing REVOKER_CALLBACK_SECRET, and a limiter that only counts
+  // authenticated calls does not bound guessing at all. The cost is that a
+  // flood can also crowd out the genuine workflow — which fails the system
+  // closed (an approval left standing that the watcher still catches on its
+  // next scan) rather than open.
+  if (callbackRateLimited(Date.now())) {
+    return refuseCallback(res, 429, `more than ${CALLBACK_MAX_PER_MINUTE} callbacks in one minute`)
+  }
+
+  if (CALLBACK_SECRET === undefined) {
+    return refuseCallback(
+      res,
+      503,
+      'REVOKER_CALLBACK_SECRET is not set — the workflow callback is closed. ' +
+        'Set the same value in the agent environment and in the workflow HTTP Request node.',
+    )
+  }
+
+  const presented = String(req.headers['authorization'] ?? '')
+  if (!presented.startsWith('Bearer ') || !secretMatches(presented.slice(7), CALLBACK_SECRET)) {
+    return refuseCallback(res, 401, 'missing or invalid bearer credential')
+  }
+
+  let raw: string
+  try {
+    raw = await readBody(req, CALLBACK_BODY_LIMIT_BYTES)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'request body could not be read'
+    return refuseCallback(res, message === 'payload too large' ? 413 : 400, message)
+  }
+
+  const parsed = parseCallback(raw)
+  if (!parsed.ok) return refuseCallback(res, 400, parsed.reason)
+
+  const { token, spender, via, txHash } = parsed.value
+  // Never taken from the request. KeeperHub signs for exactly one account, so
+  // an `owner` field would be a parameter the endpoint could not honour.
+  const owner = config.walletAddress
+  const detectedAt = Date.now()
+
+  // Recorded before the revoke, not after: if the process dies mid-execution
+  // the trail still shows that the workflow escalated and when.
+  audit('threat.detected', {
+    source: 'keeperhub-workflow',
+    endpoint: 'POST /revoke',
+    token,
+    owner,
+    spender,
+    via,
+    ...(txHash === undefined ? {} : { approvalTx: txHash }),
+  })
+
+  let kh: KeeperHub
+  try {
+    kh = new KeeperHub()
+  } catch (error) {
+    // config.apiKey throws when there are no credentials. That is a 500 about
+    // this process, not a 4xx about the caller's request.
+    return refuseCallback(res, 500, error instanceof Error ? error.message : 'KeeperHub unavailable')
+  }
+
+  // One revoke per Approval event. The trigger's own transaction hash is the
+  // natural idempotency key: a workflow that retries its HTTP node cannot
+  // submit the same revoke twice inside KeeperHub's 24h dedup window, while a
+  // genuinely new approval to the same spender carries a new hash and executes.
+  const dedup = txHash === undefined ? {} : { idempotencyKey: `wf-${txHash}` }
+
+  const outcome =
+    via === 'permit2'
+      ? await revokePermit2Allowances({ kh, owner, pairs: [{ token, spender }], ...dedup, detectedAt })
+      : await revokeApproval({ kh, token, owner, spender, ...dedup, detectedAt })
+
+  sendJson(res, 200, { ok: true, via, token, spender, ...outcome })
+}
+
+/** Whether POST /revoke answers at all, and if so whether it can be used. */
+type CallbackState = 'disabled' | 'unconfigured' | 'armed'
+
+function callbackState(dryRun: boolean): CallbackState {
+  if (dryRun) return 'disabled'
+  return CALLBACK_SECRET === undefined ? 'unconfigured' : 'armed'
+}
+
 function handleStream(req: IncomingMessage, res: ServerResponse): void {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -263,6 +546,19 @@ function main(): void {
   // A replay watches nothing and calls nothing, so it is dry by construction.
   const dryRun = replay || process.argv.includes('--dry-run')
 
+  /**
+   * The callback is armed exactly when the agent is, off one switch.
+   *
+   * That is deliberate rather than convenient. `--replay` sets `dryRun` by
+   * construction above, and REVOKER_DEMO makes config.ts push `--dry-run` into
+   * argv before this module's body ever runs — so this single gate covers
+   * dry-run, demo and replay alike, and there is no combination of flags that
+   * leaves a live write endpoint bolted onto a process which is otherwise
+   * executing nothing. A judge running `pnpm demo:verify` must never be one
+   * stray HTTP request away from a real transaction.
+   */
+  const callback = callbackState(dryRun)
+
   const recorded = replay ? loadReplay() : []
   const rawPage = readFileSync(new URL('../public/verify.html', import.meta.url), 'utf8')
   const page = replay ? labelAsReplay(rawPage, recorded) : rawPage
@@ -277,6 +573,9 @@ function main(): void {
     // check, a screenshot pipeline, another agent — so "is this live?" has a
     // machine-readable answer too.
     replay,
+    // Same reasoning applied to the write endpoint: "can this process be told
+    // to revoke something?" is answerable without sending it a request.
+    revokeCallback: callback,
     ...(replay
       ? {
           replaySource: 'data/demo-run.jsonl',
@@ -291,6 +590,21 @@ function main(): void {
     const url = new URL(req.url ?? '/', `http://localhost:${PORT}`)
 
     if (url.pathname === '/api/stream') return handleStream(req, res)
+
+    // Not routed at all unless the agent is armed, so a dry run, the demo and
+    // the replay each answer a plain 404 — an endpoint that is absent rather
+    // than one that advertises itself as switched off.
+    if (url.pathname === '/revoke' && !dryRun) {
+      handleRevokeCallback(req, res).catch((error: unknown) => {
+        try {
+          refuseCallback(res, 500, error instanceof Error ? error.message : String(error))
+        } catch {
+          // The socket is already gone. An unattended agent does not get to die
+          // of an unhandled rejection because one caller hung up mid-answer.
+        }
+      })
+      return
+    }
 
     if (url.pathname === '/api/meta') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -318,6 +632,7 @@ function main(): void {
     } else {
       console.log(`  watching ${config.walletAddress} on ${config.network}`)
       console.log(`  mode     ${dryRun ? 'DRY RUN' : 'ARMED'}`)
+      console.log(`  callback POST /revoke — ${callback}`)
     }
     console.log()
   })

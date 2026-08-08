@@ -12,6 +12,7 @@
     "spike": "tsx scripts/spike.ts",
     "seed": "tsx scripts/seed.ts",
     "watch": "tsx src/index.ts",
+    "workflow:deploy": "tsx scripts/deploy-workflow.ts",
     "demo": "REVOKER_DEMO=1 tsx src/index.ts --dry-run --once",
     "demo:verify": "REVOKER_DEMO=1 tsx src/server.ts --replay",
     "bench": "tsx scripts/bench.ts",

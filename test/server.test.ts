@@ -74,6 +74,30 @@ const watcherMock = vi.hoisted(() => {
 })
 vi.mock('../src/watcher.js', () => ({ Watcher: watcherMock.Watcher }))
 
+/**
+ * POST /revoke calls straight into the real revoke module, which would reach
+ * KeeperHub and the chain. Both are mocked so the callback tests assert ROUTING
+ * — which of the two revoke functions was reached, with what arguments — while
+ * the functions themselves stay covered by test/revoke.test.ts. The KeeperHub
+ * constructor is a spy so the "no credentials" failure can be forced.
+ */
+const revokeMock = vi.hoisted(() => ({
+  revokeApproval: vi.fn(),
+  revokePermit2Allowances: vi.fn(),
+}))
+vi.mock('../src/revoke.js', () => revokeMock)
+
+const khMock = vi.hoisted(() => {
+  const construct = vi.fn()
+  class KeeperHub {
+    constructor() {
+      construct()
+    }
+  }
+  return { KeeperHub, construct }
+})
+vi.mock('../src/keeperhub.js', () => ({ KeeperHub: khMock.KeeperHub }))
+
 const configMock = {
   walletAddress: '0x1234567890123456789012345678901234567890',
   network: 'sepolia',
@@ -128,9 +152,16 @@ vi.mock('node:fs', async (importOriginal) => {
   }
 })
 
-function makeReq(url?: string): IncomingMessage {
+function makeReq(
+  url?: string,
+  init: { method?: string; headers?: Record<string, string> } = {},
+): IncomingMessage {
   const emitter = new EventEmitter()
-  return Object.assign(emitter, { url }) as unknown as IncomingMessage
+  return Object.assign(emitter, {
+    url,
+    method: init.method ?? 'GET',
+    headers: init.headers ?? {},
+  }) as unknown as IncomingMessage
 }
 
 function makeRes(write?: ReturnType<typeof vi.fn>): {
@@ -143,6 +174,27 @@ function makeRes(write?: ReturnType<typeof vi.fn>): {
     write: write ?? vi.fn(),
     end: vi.fn(),
   }
+}
+
+/** The shared secret the callback tests configure. Never a real credential. */
+const SECRET = 'test-callback-secret'
+const TOKEN = '0x4facb5FD1682c4449cAD42b7590861f7eD5c88Cb'
+const SPENDER = '0x8eBf8540EdE8e40CD94825C418758d4029D8892e'
+const APPROVAL_TX = `0x${'ab'.repeat(32)}`
+
+/** `allowanceAfter` is a bigint on purpose — JSON.stringify throws on those. */
+const ERC20_OUTCOME = {
+  executed: true,
+  latencyMs: 1234,
+  allowanceAfter: 0n,
+  transactionHash: '0xfeed',
+  explorerUrl: 'https://sepolia.etherscan.io/tx/0xfeed',
+  disposition: 'confirmed',
+}
+const PERMIT2_OUTCOME = {
+  ...ERC20_OUTCOME,
+  pairs: [{ token: TOKEN, spender: SPENDER }],
+  cleared: [{ token: TOKEN, spender: SPENDER }],
 }
 
 let dir: string
@@ -167,6 +219,10 @@ beforeEach(() => {
   })
   fsState.replay = 'real'
 
+  revokeMock.revokeApproval.mockReset().mockResolvedValue(ERC20_OUTCOME)
+  revokeMock.revokePermit2Allowances.mockReset().mockResolvedValue(PERMIT2_OUTCOME)
+  khMock.construct.mockReset()
+
   originalArgv = process.argv
   vi.spyOn(console, 'log').mockImplementation(() => undefined)
 })
@@ -177,6 +233,7 @@ afterEach(() => {
   delete process.env['REVOKER_AUDIT_LOG']
   delete process.env['PORT']
   delete process.env['REVOKER_DEMO']
+  delete process.env['REVOKER_CALLBACK_SECRET']
   process.removeAllListeners('SIGINT')
   process.removeAllListeners('SIGTERM')
   vi.restoreAllMocks()
@@ -342,6 +399,8 @@ describe('server.ts — routing', () => {
       // Present on a live run too, and false: "is this a recording?" must have
       // a machine-readable answer in both directions, not only the alarming one.
       replay: false,
+      // Live, but no secret configured — so the callback answers, and refuses.
+      revokeCallback: 'unconfigured',
     })
   })
 
@@ -909,6 +968,510 @@ describe('data/demo-run.jsonl — the recording that ships', () => {
       expect(line).not.toContain('0xowner0000')
       expect(line).not.toContain('"txHash":"0xhash"')
     }
+  })
+})
+
+describe('server.ts — POST /revoke (the workflow callback)', () => {
+  /**
+   * Drain the microtask queue. The handler suspends on the request body stream
+   * and resumes through several resolved promises; `await Promise.resolve()` in
+   * a loop advances all of that without a timer, so these tests work identically
+   * under fake and real timers.
+   */
+  async function flush(): Promise<void> {
+    for (let tick = 0; tick < 12; tick += 1) await Promise.resolve()
+  }
+
+  type Res = ReturnType<typeof makeRes>
+
+  /**
+   * Fire one request at /revoke and wait for the answer.
+   *
+   * `chunks` rather than a single body so the size ceiling can be driven the
+   * way a real socket drives it — in pieces.
+   */
+  async function call(
+    listener: (req: IncomingMessage, res: ServerResponse) => void,
+    opts: {
+      body?: unknown
+      chunks?: string[]
+      auth?: string | null
+      method?: string
+      res?: Res
+      emitError?: unknown
+      skipEnd?: boolean
+    } = {},
+  ): Promise<Res> {
+    const headers: Record<string, string> = {}
+    const auth = opts.auth === undefined ? `Bearer ${SECRET}` : opts.auth
+    if (auth !== null) headers['authorization'] = auth
+
+    const req = makeReq('/revoke', { method: opts.method ?? 'POST', headers })
+    const res = opts.res ?? makeRes()
+    listener(req, res as unknown as ServerResponse)
+    await flush()
+
+    const chunks = opts.chunks ?? (opts.body === undefined ? ['{}'] : [JSON.stringify(opts.body)])
+    for (const chunk of chunks) req.emit('data', chunk)
+    if (opts.emitError !== undefined) req.emit('error', opts.emitError)
+    if (opts.skipEnd !== true) req.emit('end')
+    await flush()
+    return res
+  }
+
+  /** The JSON body the handler answered with. */
+  function answer(res: Res): Record<string, unknown> {
+    return JSON.parse(res.end.mock.calls[0]?.[0] as string) as Record<string, unknown>
+  }
+
+  function status(res: Res): number {
+    return res.writeHead.mock.calls[0]?.[0] as number
+  }
+
+  async function armedServer(): Promise<(req: IncomingMessage, res: ServerResponse) => void> {
+    process.env['REVOKER_CALLBACK_SECRET'] = SECRET
+    return loadServer()
+  }
+
+  const GOOD = { token: TOKEN, spender: SPENDER }
+
+  describe('when the agent is not armed', () => {
+    it('is unreachable in --replay: a judge running the recording gets a 404', async () => {
+      process.env['REVOKER_CALLBACK_SECRET'] = SECRET
+      process.argv = [...originalArgv, '--replay']
+      const listener = await loadServer()
+
+      const res = await call(listener, { body: GOOD })
+
+      expect(status(res)).toBe(404)
+      expect(res.end).toHaveBeenCalledWith('not found')
+      expect(revokeMock.revokeApproval).not.toHaveBeenCalled()
+    })
+
+    it('is unreachable in demo mode, which forces --dry-run before this module loads', async () => {
+      process.env['REVOKER_CALLBACK_SECRET'] = SECRET
+      process.argv = ['node', 'src/server.ts']
+      process.env['REVOKER_DEMO'] = '1'
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+      await vi.importActual('../src/config.js')
+      const listener = await loadServer()
+
+      const res = await call(listener, { body: GOOD })
+
+      expect(status(res)).toBe(404)
+      expect(revokeMock.revokeApproval).not.toHaveBeenCalled()
+    })
+
+    it('is unreachable in --dry-run, and says so in /api/meta and on the console', async () => {
+      process.env['REVOKER_CALLBACK_SECRET'] = SECRET
+      process.argv = [...originalArgv, '--dry-run']
+      const listener = await loadServer()
+
+      expect(status(await call(listener, { body: GOOD }))).toBe(404)
+
+      const metaRes = makeRes()
+      listener(makeReq('/api/meta'), metaRes as unknown as ServerResponse)
+      expect(answer(metaRes)['revokeCallback']).toBe('disabled')
+
+      const logged = vi.mocked(console.log).mock.calls.map((c: unknown[]) => String(c[0]))
+      expect(logged).toContain('  callback POST /revoke — disabled')
+    })
+  })
+
+  describe('authentication', () => {
+    it('rejects an unauthenticated call with 401 and executes nothing', async () => {
+      const listener = await armedServer()
+
+      const res = await call(listener, { body: GOOD, auth: null })
+
+      expect(status(res)).toBe(401)
+      expect(answer(res)).toEqual({ ok: false, error: 'missing or invalid bearer credential' })
+      expect(revokeMock.revokeApproval).not.toHaveBeenCalled()
+    })
+
+    it('rejects a bearer token of the wrong length', async () => {
+      const listener = await armedServer()
+      expect(status(await call(listener, { body: GOOD, auth: 'Bearer short' }))).toBe(401)
+    })
+
+    it('rejects a wrong token of exactly the right length', async () => {
+      // The interesting case: same length, so the comparison reaches
+      // timingSafeEqual rather than being short-circuited by the length guard.
+      const listener = await armedServer()
+      const wrong = 'x'.repeat(SECRET.length)
+      expect(status(await call(listener, { body: GOOD, auth: `Bearer ${wrong}` }))).toBe(401)
+    })
+
+    it('rejects a credential that is not a Bearer scheme at all', async () => {
+      const listener = await armedServer()
+      expect(status(await call(listener, { body: GOOD, auth: `Basic ${SECRET}` }))).toBe(401)
+    })
+
+    it('fails closed with 503 when REVOKER_CALLBACK_SECRET is unset, and names the variable', async () => {
+      const listener = await loadServer() // armed agent, no secret configured
+
+      const res = await call(listener, { body: GOOD })
+
+      expect(status(res)).toBe(503)
+      expect(String(answer(res)['error'])).toContain('REVOKER_CALLBACK_SECRET')
+      expect(revokeMock.revokeApproval).not.toHaveBeenCalled()
+    })
+
+    it('treats an exported-but-blank secret as unset rather than as a password', async () => {
+      process.env['REVOKER_CALLBACK_SECRET'] = ''
+      const listener = await loadServer()
+
+      expect(status(await call(listener, { body: GOOD, auth: 'Bearer ' }))).toBe(503)
+
+      const metaRes = makeRes()
+      listener(makeReq('/api/meta'), metaRes as unknown as ServerResponse)
+      expect(answer(metaRes)['revokeCallback']).toBe('unconfigured')
+    })
+
+    it('reports itself armed in /api/meta and on the console once configured', async () => {
+      const listener = await armedServer()
+
+      const metaRes = makeRes()
+      listener(makeReq('/api/meta'), metaRes as unknown as ServerResponse)
+      expect(answer(metaRes)['revokeCallback']).toBe('armed')
+
+      const logged = vi.mocked(console.log).mock.calls.map((c: unknown[]) => String(c[0]))
+      expect(logged).toContain('  callback POST /revoke — armed')
+    })
+
+    it('refuses any method other than POST, without spending a rate-limit slot', async () => {
+      const listener = await armedServer()
+
+      const res = await call(listener, { body: GOOD, method: 'GET' })
+
+      expect(status(res)).toBe(405)
+      expect(answer(res)).toEqual({ ok: false, error: 'POST only' })
+    })
+  })
+
+  describe('request validation', () => {
+    async function reject(body: unknown): Promise<Record<string, unknown>> {
+      const listener = await armedServer()
+      const res = await call(listener, { body })
+      expect(status(res)).toBe(400)
+      expect(revokeMock.revokeApproval).not.toHaveBeenCalled()
+      return answer(res)
+    }
+
+    it('rejects a body that is not JSON', async () => {
+      const listener = await armedServer()
+      const res = await call(listener, { chunks: ['{ not json'] })
+      expect(status(res)).toBe(400)
+      expect(answer(res)['error']).toBe('body is not valid JSON')
+    })
+
+    it('rejects a JSON scalar', async () => {
+      expect((await reject('a string')).error).toBe('body must be a JSON object')
+    })
+
+    it('rejects a JSON null', async () => {
+      // `typeof null === 'object'`, so this is the case the null check exists for.
+      expect((await reject(null)).error).toBe('body must be a JSON object')
+    })
+
+    it('rejects a missing token', async () => {
+      expect((await reject({ spender: SPENDER })).error).toBe(
+        'token must be a 20-byte hex address',
+      )
+    })
+
+    it('rejects a malformed token', async () => {
+      expect((await reject({ token: '0xnope', spender: SPENDER })).error).toBe(
+        'token must be a 20-byte hex address',
+      )
+    })
+
+    it('rejects a missing spender', async () => {
+      expect((await reject({ token: TOKEN })).error).toBe('spender must be a 20-byte hex address')
+    })
+
+    it('rejects a malformed spender', async () => {
+      expect((await reject({ token: TOKEN, spender: '0x00' })).error).toBe(
+        'spender must be a 20-byte hex address',
+      )
+    })
+
+    it('rejects an unknown `via`', async () => {
+      expect((await reject({ ...GOOD, via: 'flashbots' })).error).toBe(
+        "via must be 'erc20' or 'permit2'",
+      )
+    })
+
+    it('rejects a non-string txHash', async () => {
+      expect((await reject({ ...GOOD, txHash: 42 })).error).toBe(
+        'txHash must be a 32-byte hex transaction hash',
+      )
+    })
+
+    it('rejects a txHash of the wrong length', async () => {
+      expect((await reject({ ...GOOD, txHash: '0xdeadbeef' })).error).toBe(
+        'txHash must be a 32-byte hex transaction hash',
+      )
+    })
+
+    it('refuses an oversized body with 413 and stops buffering it', async () => {
+      const listener = await armedServer()
+      const chunk = 'x'.repeat(3_000)
+
+      // Three chunks: the first fits, the second crosses the ceiling, the third
+      // must be dropped rather than appended to a buffer nobody will read.
+      const res = await call(listener, { chunks: [chunk, chunk, chunk] })
+
+      expect(status(res)).toBe(413)
+      expect(answer(res)['error']).toBe('payload too large')
+      expect(revokeMock.revokeApproval).not.toHaveBeenCalled()
+    })
+
+    it('answers 400 when the request stream errors mid-body', async () => {
+      const listener = await armedServer()
+
+      const res = await call(listener, {
+        chunks: [],
+        emitError: new Error('ECONNRESET'),
+        skipEnd: true,
+      })
+
+      expect(status(res)).toBe(400)
+      expect(answer(res)['error']).toBe('ECONNRESET')
+    })
+
+    it('answers 400 when the stream fails with a non-Error', async () => {
+      const listener = await armedServer()
+
+      const res = await call(listener, { chunks: [], emitError: 'socket hung up', skipEnd: true })
+
+      expect(status(res)).toBe(400)
+      expect(answer(res)['error']).toBe('request body could not be read')
+    })
+  })
+
+  describe('routing to the right revoke path', () => {
+    it('routes the default (no `via`) to the ERC-20 approve(spender, 0) path', async () => {
+      const listener = await armedServer()
+
+      const res = await call(listener, { body: GOOD })
+
+      expect(status(res)).toBe(200)
+      expect(revokeMock.revokePermit2Allowances).not.toHaveBeenCalled()
+      expect(revokeMock.revokeApproval).toHaveBeenCalledTimes(1)
+      expect(revokeMock.revokeApproval.mock.calls[0]?.[0]).toMatchObject({
+        token: TOKEN,
+        spender: SPENDER,
+        // Never taken from the request: KeeperHub signs for one account only.
+        owner: configMock.walletAddress,
+      })
+    })
+
+    it('routes via: "erc20" to the same path', async () => {
+      const listener = await armedServer()
+      await call(listener, { body: { ...GOOD, via: 'erc20' } })
+
+      expect(revokeMock.revokeApproval).toHaveBeenCalledTimes(1)
+      expect(revokeMock.revokePermit2Allowances).not.toHaveBeenCalled()
+    })
+
+    it('routes via: "permit2" to lockdown(), as a one-pair batch', async () => {
+      const listener = await armedServer()
+
+      const res = await call(listener, { body: { ...GOOD, via: 'permit2' } })
+
+      expect(status(res)).toBe(200)
+      expect(revokeMock.revokeApproval).not.toHaveBeenCalled()
+      expect(revokeMock.revokePermit2Allowances).toHaveBeenCalledTimes(1)
+      expect(revokeMock.revokePermit2Allowances.mock.calls[0]?.[0]).toMatchObject({
+        owner: configMock.walletAddress,
+        pairs: [{ token: TOKEN, spender: SPENDER }],
+      })
+      expect(answer(res)['via']).toBe('permit2')
+    })
+
+    it('derives an idempotency key from the Approval tx, so a retried node cannot double-submit', async () => {
+      const listener = await armedServer()
+
+      await call(listener, { body: { ...GOOD, txHash: APPROVAL_TX } })
+
+      expect(revokeMock.revokeApproval.mock.calls[0]?.[0]).toMatchObject({
+        idempotencyKey: `wf-${APPROVAL_TX}`,
+      })
+    })
+
+    it('omits the idempotency key when the workflow forwarded no tx hash', async () => {
+      const listener = await armedServer()
+
+      await call(listener, { body: GOOD })
+
+      expect(revokeMock.revokeApproval.mock.calls[0]?.[0]).not.toHaveProperty('idempotencyKey')
+    })
+
+    it('serialises the bigint allowance instead of throwing on it', async () => {
+      const listener = await armedServer()
+
+      const res = await call(listener, { body: GOOD })
+
+      expect(answer(res)).toMatchObject({
+        ok: true,
+        via: 'erc20',
+        disposition: 'confirmed',
+        // 0n survived JSON.stringify as a string rather than killing the response.
+        allowanceAfter: '0',
+        explorerUrl: 'https://sepolia.etherscan.io/tx/0xfeed',
+      })
+    })
+
+    it('returns 500 when the process has no KeeperHub credentials', async () => {
+      const listener = await armedServer()
+      khMock.construct.mockImplementationOnce(() => {
+        throw new Error('Missing KH_API_KEY.')
+      })
+
+      const res = await call(listener, { body: GOOD })
+
+      expect(status(res)).toBe(500)
+      expect(String(answer(res)['error'])).toContain('KH_API_KEY')
+      expect(revokeMock.revokeApproval).not.toHaveBeenCalled()
+    })
+
+    it('returns 500 when the KeeperHub client fails with a non-Error', async () => {
+      const listener = await armedServer()
+      khMock.construct.mockImplementationOnce(() => {
+        // A bare string on purpose: the handler must not assume every failure
+        // arrives as an Error, and this is the branch that proves it.
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 'nope'
+      })
+
+      const res = await call(listener, { body: GOOD })
+
+      expect(status(res)).toBe(500)
+      expect(answer(res)['error']).toBe('KeeperHub unavailable')
+    })
+  })
+
+  describe('the audit trail', () => {
+    it('records the escalation as a threat before executing, tagged as workflow-sourced', async () => {
+      const listener = await armedServer()
+      const streamReq = makeReq('/api/stream')
+      const streamRes = makeRes()
+      listener(streamReq, streamRes as unknown as ServerResponse)
+
+      await call(listener, { body: { ...GOOD, txHash: APPROVAL_TX } })
+
+      const frames = streamRes.write.mock.calls
+        .map((c: unknown[]) => String(c[0]))
+        .filter((f) => f.startsWith('data: '))
+        .map((f) => JSON.parse(f.slice(6)) as Record<string, unknown>)
+
+      const detected = frames.find((f) => f['stage'] === 'threat.detected')
+      expect(detected).toMatchObject({
+        source: 'keeperhub-workflow',
+        endpoint: 'POST /revoke',
+        token: TOKEN,
+        spender: SPENDER,
+        via: 'erc20',
+        approvalTx: APPROVAL_TX,
+      })
+
+      streamReq.emit('close')
+    })
+
+    it('records a refused callback too — probing a revoke endpoint is a signal', async () => {
+      const listener = await armedServer()
+      const streamReq = makeReq('/api/stream')
+      const streamRes = makeRes()
+      listener(streamReq, streamRes as unknown as ServerResponse)
+
+      await call(listener, { body: GOOD, auth: null })
+
+      const frames = streamRes.write.mock.calls
+        .map((c: unknown[]) => String(c[0]))
+        .filter((f) => f.startsWith('data: '))
+        .map((f) => JSON.parse(f.slice(6)) as Record<string, unknown>)
+
+      expect(frames.find((f) => f['stage'] === 'watch.error')).toMatchObject({
+        endpoint: 'POST /revoke',
+        status: 401,
+      })
+
+      streamReq.emit('close')
+    })
+  })
+
+  describe('rate limiting', () => {
+    it('caps callbacks at 20 a minute, counting unauthenticated attempts too', async () => {
+      // Counted before the secret is checked on purpose: a bucket that only
+      // counts authenticated calls does not bound guessing the secret at all.
+      const listener = await armedServer()
+
+      for (let n = 0; n < 20; n += 1) {
+        expect(status(await call(listener, { body: GOOD, auth: null }))).toBe(401)
+      }
+
+      const res = await call(listener, { body: GOOD })
+      expect(status(res)).toBe(429)
+      expect(String(answer(res)['error'])).toContain('20 callbacks in one minute')
+      expect(revokeMock.revokeApproval).not.toHaveBeenCalled()
+    })
+
+    it('lets the window slide: attempts older than a minute stop counting', async () => {
+      vi.useFakeTimers()
+      try {
+        const listener = await armedServer()
+
+        for (let n = 0; n < 20; n += 1) await call(listener, { body: GOOD, auth: null })
+        expect(status(await call(listener, { body: GOOD }))).toBe(429)
+
+        await vi.advanceTimersByTimeAsync(61_000)
+
+        const res = await call(listener, { body: GOOD })
+        expect(status(res)).toBe(200)
+        expect(revokeMock.revokeApproval).toHaveBeenCalledTimes(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  })
+
+  describe('when the revoke itself explodes', () => {
+    it('answers 500 rather than leaving an unhandled rejection in an unattended agent', async () => {
+      const listener = await armedServer()
+      revokeMock.revokeApproval.mockRejectedValueOnce(new Error('KeeperHub unreachable'))
+
+      const res = await call(listener, { body: GOOD })
+
+      expect(status(res)).toBe(500)
+      expect(answer(res)['error']).toBe('KeeperHub unreachable')
+    })
+
+    it('stringifies a non-Error rejection', async () => {
+      const listener = await armedServer()
+      revokeMock.revokeApproval.mockRejectedValueOnce('exploded')
+
+      const res = await call(listener, { body: GOOD })
+
+      expect(status(res)).toBe(500)
+      expect(answer(res)['error']).toBe('exploded')
+    })
+
+    it('swallows a failure to even report the failure, when the socket is already gone', async () => {
+      const listener = await armedServer()
+      revokeMock.revokeApproval.mockRejectedValueOnce(new Error('boom'))
+
+      const res = makeRes()
+      res.writeHead.mockImplementation(() => {
+        throw new Error('socket closed')
+      })
+
+      // The assertion is that this resolves at all: an exception escaping the
+      // last-resort handler would surface as an unhandled rejection.
+      await expect(call(listener, { body: GOOD, res })).resolves.toBeDefined()
+      expect(res.end).not.toHaveBeenCalled()
+    })
   })
 })
 

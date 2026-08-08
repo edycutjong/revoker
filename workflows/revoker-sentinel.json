@@ -1,0 +1,155 @@
+{
+  "name": "Revoker — Approval Sentinel",
+  "description": "Watches Approval events on the agent's own wallet, filters for unlimited grants, and escalates to the Revoker agent's POST /revoke callback — which performs the atomic check-and-execute revoke. Detection and alerting live in the workflow; the write stays server-side and atomic. Placeholders ${REVOKER_CALLBACK_URL}, ${REVOKER_CALLBACK_SECRET}, ${REVOKER_WATCHED_TOKEN} and ${REVOKER_WATCHED_WALLET} are substituted from the environment by scripts/deploy-workflow.ts; no secret is committed.",
+  "nodes": [
+    {
+      "id": "trigger-1",
+      "type": "trigger",
+      "position": { "x": 0, "y": 0 },
+      "data": {
+        "type": "trigger",
+        "label": "Approval",
+        "description": "Fires on every ERC-20 Approval event emitted by the watched token. The ABI is supplied explicitly because the demo token is an unverified throwaway deploy, so KeeperHub cannot auto-fetch it.",
+        "status": "idle",
+        "config": {
+          "triggerType": "Event",
+          "network": "11155111",
+          "contractAddress": "${REVOKER_WATCHED_TOKEN}",
+          "eventName": "Approval",
+          "contractABI": "[{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"owner\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"spender\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"}],\"name\":\"Approval\",\"type\":\"event\"}]"
+        }
+      }
+    },
+    {
+      "id": "filter-1",
+      "type": "action",
+      "position": { "x": 260, "y": 0 },
+      "data": {
+        "type": "action",
+        "label": "Unlimited, and ours",
+        "description": "Two tests, both of which must hold. The allowance test is exact equality with type(uint256).max, mirroring the agent's own `unlimited-to-unverified` rule rather than inventing a looser threshold for the workflow. The owner test exists because the trigger sees every Approval on the token, and only the agent's own wallet is revocable — KeeperHub signs for that account and no other.",
+        "status": "idle",
+        "config": {
+          "actionType": "Condition",
+          "condition": "{{@trigger-1:Approval.args.value}} == 115792089237316195423570985008687907853269984665640564039457584007913129639935 && {{@trigger-1:Approval.args.owner}} == ${REVOKER_WATCHED_WALLET}",
+          "conditionConfig": {
+            "group": {
+              "id": "grp-filter-1",
+              "logic": "AND",
+              "rules": [
+                {
+                  "id": "rule-unlimited",
+                  "leftOperand": "{{@trigger-1:Approval.args.value}}",
+                  "operator": "==",
+                  "rightOperand": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+                },
+                {
+                  "id": "rule-owner",
+                  "leftOperand": "{{@trigger-1:Approval.args.owner}}",
+                  "operator": "==",
+                  "rightOperand": "${REVOKER_WATCHED_WALLET}"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "revoke-1",
+      "type": "action",
+      "position": { "x": 520, "y": 0 },
+      "data": {
+        "type": "action",
+        "label": "Revoke via agent",
+        "description": "The seam. This does NOT write to the chain — it asks the Revoker agent to, and the agent performs the revoke as a single server-side check-and-execute. That is why the workflow round-trip cannot re-open the TOCTOU race: the allowance re-read and the approve(spender,0) still happen inside one KeeperHub operation, and this call happens strictly before it. failOnError is off because a landing that needs the fee-escalation ladder can outlast the 30s HTTP ceiling; a timeout must escalate to a human, not silently end the run.",
+        "status": "idle",
+        "config": {
+          "actionType": "HTTP Request",
+          "endpoint": "${REVOKER_CALLBACK_URL}",
+          "httpMethod": "POST",
+          "timeout": 30,
+          "failOnError": false,
+          "httpHeaders": "{\"Authorization\": \"Bearer ${REVOKER_CALLBACK_SECRET}\", \"Content-Type\": \"application/json\"}",
+          "httpBody": "{\"token\": \"{{@trigger-1:Approval.address}}\", \"spender\": \"{{@trigger-1:Approval.args.spender}}\", \"via\": \"erc20\", \"txHash\": \"{{@trigger-1:Approval.transactionHash}}\"}"
+        }
+      }
+    },
+    {
+      "id": "verdict-1",
+      "type": "action",
+      "position": { "x": 780, "y": 0 },
+      "data": {
+        "type": "action",
+        "label": "Confirmed on chain?",
+        "description": "The agent reports four dispositions and only one of them means the allowance is gone. Branching on it is what keeps this workflow from posting a success alert for a transaction that reverted or never landed.",
+        "status": "idle",
+        "config": {
+          "actionType": "Condition",
+          "condition": "{{@revoke-1:Revoke via agent.data.disposition}} === confirmed",
+          "conditionConfig": {
+            "group": {
+              "id": "grp-verdict-1",
+              "logic": "AND",
+              "rules": [
+                {
+                  "id": "rule-confirmed",
+                  "leftOperand": "{{@revoke-1:Revoke via agent.data.disposition}}",
+                  "operator": "===",
+                  "rightOperand": "confirmed"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "alert-confirmed",
+      "type": "action",
+      "position": { "x": 1040, "y": -90 },
+      "data": {
+        "type": "action",
+        "label": "Alert — revoked",
+        "description": "Carries the explorer link the agent read back off the execution record, so the alert links to evidence rather than asserting success.",
+        "status": "idle",
+        "config": {
+          "actionType": "discord/send-message",
+          "discordMessage": "✅ Revoker — unlimited approval REVOKED\nspender: {{@trigger-1:Approval.args.spender}}\ntoken: {{@trigger-1:Approval.address}}\ngranted in: {{@trigger-1:Approval.transactionHash}}\nlatency: {{@revoke-1:Revoke via agent.data.latencyMs}} ms\nrevoke tx: {{@revoke-1:Revoke via agent.data.explorerUrl}}"
+        }
+      }
+    },
+    {
+      "id": "alert-escalate",
+      "type": "action",
+      "position": { "x": 1040, "y": 90 },
+      "data": {
+        "type": "action",
+        "label": "Alert — needs a human",
+        "description": "Everything that is not a confirmed revoke: reverted, still pending past the agent's 75s budget, skipped because the allowance was already zero, an HTTP timeout, or an outright refusal. Deliberately one loud branch rather than silence — a sentinel whose failures are quieter than its wins is not a sentinel.",
+        "status": "idle",
+        "config": {
+          "actionType": "discord/send-message",
+          "discordMessage": "⚠️ Revoker — unlimited approval NOT confirmed revoked\nspender: {{@trigger-1:Approval.args.spender}}\ntoken: {{@trigger-1:Approval.address}}\ngranted in: {{@trigger-1:Approval.transactionHash}}\nagent http status: {{@revoke-1:Revoke via agent.status}}\ndisposition: {{@revoke-1:Revoke via agent.data.disposition}}\nagent error: {{@revoke-1:Revoke via agent.data.error}}\ntransport error: {{@revoke-1:Revoke via agent.error}}\nCheck the /verify dashboard and audit trail — the transaction may still land."
+        }
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e-trigger-filter", "source": "trigger-1", "target": "filter-1" },
+    { "id": "e-filter-revoke", "source": "filter-1", "target": "revoke-1", "sourceHandle": "true" },
+    { "id": "e-revoke-verdict", "source": "revoke-1", "target": "verdict-1" },
+    {
+      "id": "e-verdict-confirmed",
+      "source": "verdict-1",
+      "target": "alert-confirmed",
+      "sourceHandle": "true"
+    },
+    {
+      "id": "e-verdict-escalate",
+      "source": "verdict-1",
+      "target": "alert-escalate",
+      "sourceHandle": "false"
+    }
+  ]
+}
