@@ -476,7 +476,7 @@ opened. Full reasoning, failure modes and the Permit2 guard-helper detour:
 | Runtime | TypeScript strict, Node 22 | `noUncheckedIndexedAccess`, `verbatimModuleSyntax` |
 | Dashboard | Node `http` + SSE, zero-dependency HTML | No CDN, no build step; backfills from the durable JSONL on connect |
 | Query surface | MCP over stdio | `src/mcp.ts` — read-only by default, writes gated behind `confirm: true` |
-| Tests | Vitest + Foundry + Playwright | 720 TypeScript + 54 Solidity + 34 E2E = **808**, 100% coverage on `src/`, `scripts/` and the contracts |
+| Tests | Vitest + Foundry + Playwright | 724 TypeScript + 54 Solidity + 34 E2E = **812**, 100% coverage on `src/`, `scripts/` and the contracts |
 
 ### Threat rules
 
@@ -878,11 +878,11 @@ its wins is not a sentinel.
 | CLI entrypoint | 13 | Flag parsing, and that `--dry-run` survives every path |
 | `kh` CLI wrapper | 16 | "not installed" is distinguished from "ran and said no" |
 | Repo invariants (CI + Makefile) | 28 | The gate really needs every job; `make` targets and pnpm scripts cannot drift apart |
-| Operator scripts | 151 | seed, seed:permit2, deploy:view, workflow deploy, bench, spike — all idempotent |
-| **TypeScript total** | **720** | **100% statements / branches / functions / lines** on `src/` **and** `scripts/`, gated in [`vitest.config.ts`](./vitest.config.ts) |
+| Operator scripts | 155 | seed, seed:permit2, deploy:view, workflow deploy, bench, spike — all idempotent |
+| **TypeScript total** | **724** | **100% statements / branches / functions / lines** on `src/` **and** `scripts/`, gated in [`vitest.config.ts`](./vitest.config.ts) |
 | Solidity | 54 | **100% coverage.** The drain **succeeds and takes zero** post-revoke; 6 fuzz suites |
 | Playwright E2E | 34 | The published site's headline figures must match `BENCHMARK.md`, or CI fails |
-| **Total** | **808** | |
+| **Total** | **812** | |
 
 CI runs six jobs behind a gate: quality (lint, types, coverage), security
 (`pnpm audit`, gitleaks over full history, a credential grep that fails the
@@ -1032,7 +1032,7 @@ or demo mode the route is a plain `404` — absent rather than merely disabled.
 
 ```bash
 pnpm check               # fast local gate: lint, types, TS coverage, contract tests
-pnpm test                # 720 TypeScript tests
+pnpm test                # 724 TypeScript tests
 pnpm contracts:test      # 54 Solidity tests
 pnpm contracts:coverage  # prove 100%
 pnpm e2e                 # 34 Playwright tests over the published pages
@@ -1094,7 +1094,7 @@ workflows/
 - [x] Gas escalation ladder + terminal-state polling
 - [x] Reproducible seed + p50/p95 benchmark, live SSE dashboard
 - [x] Three refusal rails — per-exposure holds, the correlated-failure brake, a rolling 24h ceiling
-- [x] CI, security scanning, 808 tests (100% coverage on `src/`, `scripts/` and contracts)
+- [x] CI, security scanning, 812 tests (100% coverage on `src/`, `scripts/` and contracts)
 - [ ] Deploy the sentinel workflow (blocked on a Pro-tier plan, not on code)
 - [ ] Durable cursor, so a restart does not lose grants older than the log window
 - [ ] Indexer-backed token discovery, removing the watchlist limit
