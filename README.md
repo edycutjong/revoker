@@ -18,7 +18,7 @@
   [![Live Demo](https://img.shields.io/badge/🌐_Live-Demo-06b6d4?style=for-the-badge)](https://revoker.edycu.dev)
   [![Pitch Deck](https://img.shields.io/badge/📊_Pitch-Deck-f59e0b?style=for-the-badge)](https://revoker.edycu.dev/pitch.html)
   [![Demo Video](https://img.shields.io/badge/🎬_Demo-Video-ef4444?style=for-the-badge)](https://youtu.be/6q7XvVC5nK4)
-  [![KeeperHub surfaces](https://img.shields.io/badge/KeeperHub-MCP_·_CLI_·_Workflows_·_Audit_trail-06b6d4?style=for-the-badge)](#keeperhub-surfaces)
+  [![KeeperHub surfaces](https://img.shields.io/badge/KeeperHub-MCP_·_CLI_·_Workflow_(authored)_·_Audit_trail-06b6d4?style=for-the-badge)](#keeperhub-surfaces)
   [![Agents Onchain](https://img.shields.io/badge/Hackathon-Agents_Onchain-6366f1?style=for-the-badge)](https://dorahacks.io/hackathon/agents-onchain)
   [![BUIDL](https://img.shields.io/badge/DoraHacks-BUIDL-8b5cf6?style=for-the-badge)](https://dorahacks.io/buidl/47528)
 
@@ -443,8 +443,8 @@ committee, and it is load-bearing in the refusals below.
 | **MCP server** | ✅ | [`src/mcp.ts`](./src/mcp.ts) — `list_exposures`, `explain_exposure`, `simulate_revoke`, `revoke_approval`. A **query surface for a human investigating**, not a model in the loop. |
 | **CLI** | ✅ | [`scripts/kh-cli.ts`](./scripts/kh-cli.ts) — arming an approval is the one genuinely CLI-shaped step, and it is an **operator** action, not the agent's. |
 | **Workflow builder** | ✅ detection only — definition committed, deployment blocked on plan tier | [`workflows/revoker-sentinel.json`](./workflows/revoker-sentinel.json) — event trigger → filter → callback → verdict → alert. Authored and pre-flight validated (6 nodes, 5 edges). **Not deployed**: creating it returns `402 upgrade_required`. See [platform findings](#platform-findings). |
-| **x402** | ❌ refused, verified | KeeperHub's `web3/sign-typed-data` explicitly refuses **"transfer authorizations"** — which is exactly what an x402 `exact` payment is (EIP-3009 `TransferWithAuthorization`). The agent's Turnkey wallet therefore *cannot be the payer*. |
-| **MPP** | ❌ refused | Metered payment protocol needs a counterparty and a billing period. Revoker has neither. Wiring it in to lengthen a list would be padding. |
+| **x402** | ❌ declined | The *workflow* `web3/sign-typed-data` action refuses "transfer authorizations" — exactly what an x402 `exact` payment is (EIP-3009 `TransferWithAuthorization`). But KeeperHub's **agentic wallet** signs them keylessly via a Turnkey sub-org, so this is possible, not impossible. It settles in **Base / Tempo mainnet USDC**, and we would not fund a mainnet wallet to demo a Sepolia agent. |
+| **MPP** | ❌ declined | Real surface: paid workflows settling in Tempo USDC.e, plus `update_workflow_listing` on the creator side. Publishing a paid workflow needs the same Pro plan the 402 above already blocks, and Revoker has no counterparty to meter. Same mainnet-funding objection as x402. |
 
 **On the MCP refusal that used to be here.** An earlier version of this README
 refused MCP outright, on the grounds that MCP puts a reasoning model in the
@@ -456,14 +456,22 @@ to right now, and why?"* Three of the four tools are pure reads. The fourth,
 `revoke_approval`, **refuses unless `confirm` is exactly `true`**. An agent may
 propose a revoke; a human authorises it.
 
-**On the x402 refusal, which is now much stronger than a shrug.** Paying with
-x402 would require a second wallet holding a hot private key, because the
-Turnkey signer will not produce the authorization. That breaks the single
-property this entire design rests on: *this process never holds a private key*.
-And the demand is real, not hypothetical — the CDP Bazaar lists **14,080**
-x402 resources, roughly **600** in the security category. We looked, found live
-endpoints Revoker could plausibly consume, and declined **for a reason we can
-name**, rather than because we ran out of time.
+**On x402, including a correction we owe the reader.** An earlier draft of this
+section claimed the Turnkey signer *cannot* produce an x402 authorization, and
+called that verified. It was wrong. KeeperHub's own docs describe an agentic
+wallet that signs EIP-3009 `TransferWithAuthorization` keylessly through a
+Turnkey sub-organisation, capped at 100 USDC per transfer. The refusal that
+survives checking is narrower and more boring: the workflow-layer
+`sign-typed-data` action does refuse transfer authorizations, and the agentic
+wallet settles in **Base / Tempo mainnet USDC** — so consuming a paid endpoint
+means funding a mainnet wallet to demonstrate a Sepolia agent. We declined on
+cost and scope, not impossibility.
+
+The demand is real, not hypothetical: the CDP Bazaar lists **14,080** x402
+resources, roughly **600** in the security category, and we confirmed live 402
+challenges from address-risk endpoints Revoker could plausibly consume. Worth
+naming the direction we did *not* explore either: `POST /revoke` could serve a
+402 challenge and be the **payee**, which requires no signing at all.
 
 ### Honest accounting
 
