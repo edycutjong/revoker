@@ -116,18 +116,52 @@ describe('audit', () => {
   })
 })
 
+describe('the default log path', () => {
+  it('falls back to audit/revoker.jsonl when REVOKER_AUDIT_LOG is unset', async () => {
+    // The default branch is the one that runs in production, so leaving it
+    // untested means the shipped path is the untested path. It is safe to
+    // exercise as long as the relative default cannot resolve to the real repo
+    // file: chdir into a temp dir first, so 'audit/revoker.jsonl' lands there.
+    const cwd = process.cwd()
+    const sandbox = mkdtempSync(join(tmpdir(), 'revoker-default-'))
+    delete process.env['REVOKER_AUDIT_LOG']
+    process.chdir(sandbox)
+    try {
+      vi.resetModules()
+      const { audit } = await import('../src/audit.js')
+      audit('watch.start', { owner: '0xabc' })
+
+      const written = readFileSync(join(sandbox, 'audit', 'revoker.jsonl'), 'utf8')
+      expect(JSON.parse(written.trim())).toMatchObject({ stage: 'watch.start', owner: '0xabc' })
+    } finally {
+      process.chdir(cwd)
+      rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('logLine', () => {
   it('renders values without [object Object]', async () => {
     const { audit, logLine } = await import('../src/audit.js')
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {})
 
-    logLine(audit('threat.detected', { rules: [{ rule: 'denylisted' }], count: 2, ok: true }))
+    logLine(
+      audit('threat.detected', {
+        rules: [{ rule: 'denylisted' }],
+        count: 2,
+        ok: true,
+        // A plain string is the one primitive that must pass through verbatim
+        // rather than through JSON.stringify (which would wrap it in quotes).
+        reason: 'spender is deny-listed',
+      }),
+    )
 
     const line = spy.mock.calls[0]![0] as string
     expect(line).not.toContain('[object Object]')
     expect(line).toContain('threat.detected')
     expect(line).toContain('count=2')
     expect(line).toContain('ok=true')
+    expect(line).toContain('reason=spender is deny-listed')
     spy.mockRestore()
   })
 
@@ -136,6 +170,26 @@ describe('logLine', () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {})
 
     expect(() => logLine(audit('revoke.failed', { error: null, hash: undefined }))).not.toThrow()
+    spy.mockRestore()
+  })
+
+  it('falls back to "?" for a value JSON.stringify cannot represent', async () => {
+    // A function is neither null/undefined, an object, a string, nor a
+    // number/boolean/bigint, so formatValue falls through to the final
+    // JSON.stringify(value) — which returns `undefined` for a function, not a
+    // string. The `?? '?'` guard is what stops that from rendering as the
+    // literal text "undefined" in the audit line.
+    const { logLine } = await import('../src/audit.js')
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    logLine({
+      ts: new Date().toISOString(),
+      stage: 'watch.scan',
+      weird: () => 'unrepresentable',
+    })
+
+    const line = spy.mock.calls[0]![0] as string
+    expect(line).toContain('weird=?')
     spy.mockRestore()
   })
 })

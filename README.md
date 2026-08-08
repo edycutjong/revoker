@@ -33,6 +33,7 @@
   [![CI](https://github.com/edycutjong/revoker/actions/workflows/ci.yml/badge.svg)](https://github.com/edycutjong/revoker/actions/workflows/ci.yml)
   [![Release](https://img.shields.io/github/v/release/edycutjong/revoker?display_name=tag&sort=semver&color=35d07f)](https://github.com/edycutjong/revoker/releases/latest)
   [![Coverage](https://img.shields.io/badge/contract_coverage-100%25-35d07f)](./contracts/test)
+  [![src coverage](https://img.shields.io/badge/src_coverage-100%25-35d07f)](./vitest.config.ts)
 
 </div>
 
@@ -47,12 +48,30 @@ Token approvals are the most common wallet-drain vector. You grant
 Months later the spender is compromised, upgraded maliciously, or was a scam all
 along — and once the drain starts it is instant and irreversible.
 
+The uncomfortable part is that **by then it is already too late to react.** A
+drain is one transaction. Any system that waits for the attack and then responds
+is in a race it can lose, and the honest reading of the numbers below is that
+13.47s is far too slow to win one.
+
+So Revoker does not try to. It attacks the *precondition* instead: a drain needs
+a live allowance, and an allowance that is already zero has nothing to exploit.
+The job is not to out-run an attacker — it is to make sure there is never a
+standing allowance worth attacking. **Continuous approval hygiene, executed
+autonomously, rather than incident response.**
+
 The industry's answer to this is **read-only**: scanners and trust scores that
 *tell you* an approval is risky. KeeperHub's own marketplace has
 `token-approval-risk-scanner-*` and `wallet-trust-score-*`. None of them **act**.
 
 **"Isn't this already solved?"** is the fair question, and the honest answer is
 that prior art exists but takes a different shape.
+
+**Revoke.cash** is the reference tool, and it is excellent — but it is a
+dashboard. You visit it, you look at your approvals, you click revoke, you sign.
+It is a manual audit you have to remember to perform, and the approval you forgot
+about is by definition the one you will not think to go and check. Revoker is the
+same operation with the human removed from the loop: a policy that runs
+continuously, so hygiene does not depend on you remembering.
 
 The commercial attempt at automated wallet rescue — Harpie was the best-known,
 and it shut down in March 2025 — worked by **racing the drainer**: watch the
@@ -74,9 +93,19 @@ every decision carries its evidence into an auditable trail.
 
 ### The Solution
 
-Revoker acts. It watches a wallet's live approval set and, the instant a concrete
-threat condition fires, autonomously executes `approve(spender, 0)` through
+Revoker acts. It watches a wallet's live approval set continuously and, whenever
+an allowance fails policy, autonomously executes `approve(spender, 0)` through
 KeeperHub — landing a real, linkable, state-changing transaction.
+
+The three rules below are a **policy about what may stand**, not a detector
+trying to spot an attack in progress. An unlimited allowance to a contract nobody
+can read is not permitted to sit there for months, whether or not it has turned
+malicious yet. That distinction is the whole design: a detector has to be right
+at the exact moment it matters, while a policy only has to be applied
+consistently — and consistency is the thing software is actually good at.
+
+The measurement below is therefore how quickly the policy is enforced once a
+violation appears, not a claim about beating a drainer to the block.
 
 ---
 
@@ -117,7 +146,7 @@ does not.
 | Contracts | Solidity 0.8.28, Foundry | Dependency-free fixtures, so the demo reproduces with no package installs |
 | Runtime | TypeScript strict, Node 22 | `noUncheckedIndexedAccess`, `verbatimModuleSyntax` |
 | Dashboard | Node `http` + SSE, zero-dependency HTML | No CDN, no build step |
-| Tests | Vitest + Foundry | 44 unit + 42 Solidity (100% contract coverage), weighted toward the negatives |
+| Tests | Vitest + Foundry | 157 unit + 42 Solidity + 34 E2E — 100% coverage on `src/` and on the contracts, weighted toward the negatives |
 
 ### Threat rules
 
@@ -146,20 +175,34 @@ resolution service, and an audit-log pipeline — plus a custody solution.
 KeeperHub signs through a Turnkey enclave, so this process never holds a private
 key.
 
-**10 distinct surfaces across 12 application call sites:**
+### Which surfaces, and why these
 
-| Surface | Used for | Where |
+KeeperHub offers several front doors. This is which ones Revoker uses, and the
+reasoning for the ones it does not — stated plainly rather than left as blanks.
+
+| Surface | Used | Why |
 |---|---|---|
-| `POST /api/execute/check-and-execute` | the atomic revoke | `src/revoke.ts` |
-| `POST /api/execute/contract-call` | arming the demo approval, contract writes | `scripts/seed.ts`, `scripts/bench.ts` |
-| `POST /api/execute/transfer` | native transfers | `scripts/spike.ts` |
-| `GET /api/execute/{id}/status` | confirmation, gas, sponsorship, audit record | `src/revoke.ts` |
-| `GET /api/chains` | network + explorer resolution | `scripts/spike.ts` |
-| `GET /api/chains/{id}/abi` | **source-verification signal for threat rule 1** | `src/rules.ts` |
-| `GET /api/user/wallet` | signer identity assertion | `scripts/spike.ts` |
-| `GET /api/user/wallet/balances` | token discovery | `src/watcher.ts` |
-| `simulate: true` | dry-run validation in the integration spike | `scripts/spike.ts` |
-| `Idempotency-Key` | safe retries without double-execution | `src/keeperhub.ts` |
+| **Direct-execution REST API** | ✅ core | The agent is a long-running watcher. It calls the API directly because every layer between detection and execution is latency inside the window an attacker is trying to use. |
+| **Audit trail** | ✅ | Every revoke's gas, sponsorship flag and receipt is read back from `GET /api/execute/{id}/status`. Every figure in `BENCHMARK.md` comes from there, not from local timing. |
+| **CLI** | ❌ | A CLI is for a human at a terminal. This agent's whole premise is that nobody is awake. |
+| **MCP server** | ❌ | MCP exposes tools to a reasoning model. Revoker deliberately has no model in the decision path: three deterministic rules, each carrying its evidence, because *"the model said so"* is not a defence when it revokes the wrong thing. |
+| **Workflow builder** | ❌ | The considered one. A workflow round-trip re-introduces the read-then-write gap that `check-and-execute` exists to close — the race this project is built to avoid. Choosing it would undo the core design. |
+| **x402 / MPP** | ❌ | Payment rails. The agent charges nobody and settles nothing; wiring them in to lengthen a list would be decoration. |
+
+**Honest accounting:** 8 REST endpoints plus 2 request-level controls
+(`simulate: true`, `Idempotency-Key`), across 12 call sites. Four of those sites
+are in `src/` — the shipping agent — and each is load-bearing:
+
+| Endpoint | In the agent | Remove it and… |
+|---|---|---|
+| `POST /api/execute/check-and-execute` | `src/revoke.ts` | the atomicity claim dies; the revoke becomes racy |
+| `GET /api/execute/{id}/status` | `src/revoke.ts` | no tx hash, no gas, no sponsorship — the benchmark has nothing to report |
+| `GET /api/chains/{id}/abi` | `src/rules.ts` | threat rule 1 cannot fire at all |
+| `GET /api/user/wallet/balances` | `src/watcher.ts` | token discovery falls back to the static watchlist |
+
+The remaining eight sites are tooling — `scripts/seed.ts` arms fixtures,
+`scripts/spike.ts` was the day-one integration proof, `scripts/bench.ts` drives
+25 cycles. Useful, but not the product.
 
 The ABI endpoint is worth calling out: it does not merely fetch ABIs here, it
 **powers a threat rule**. Unverified source is not proof of malice, but it means
@@ -364,7 +407,7 @@ served from the same process that does the watching.
 
 ```bash
 pnpm check               # everything CI runs
-pnpm test                # 44 unit tests
+pnpm test                # 157 unit tests
 pnpm contracts:test      # 42 Solidity tests, 100% coverage
 pnpm contracts:coverage  # prove it
 pnpm lint                # eslint
@@ -407,7 +450,7 @@ contracts/
 - [x] Three auditable threat rules
 - [x] Reproducible seed + p50/p95 benchmark
 - [x] Live SSE dashboard
-- [x] CI, security scanning, 86 tests (100% contract coverage)
+- [x] CI, security scanning, 233 tests (100% coverage on `src/` and contracts)
 - [ ] Indexer-backed token discovery, removing the watchlist limit
 - [ ] Mainnet with a policy layer — spending caps, daily revoke ceiling, allow-list escape hatch
 

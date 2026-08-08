@@ -81,6 +81,20 @@ describe('rule: young-spender', () => {
     expect(verdict.evidence['ageDays']).toBeCloseTo(1, 1)
   })
 
+  it('clamps the cutoff to block 0 instead of going negative on a chain younger than the window', async () => {
+    // currentBlock - blocksInDays(7) would be negative on a chain with fewer
+    // than ~50,400 blocks of history (e.g. a freshly spun-up testnet). The
+    // clamp to 0n is what stops that underflow from being asked of the RPC.
+    vi.mocked(hasCodeAt).mockResolvedValue(false)
+    vi.mocked(findDeploymentBlock).mockResolvedValue(500n)
+
+    const verdict = await youngSpender.evaluate(ctx({ currentBlock: 1_000n }))
+    expect(verdict.fired).toBe(true)
+    // The clamp is only observable through the query it produces — the fired
+    // branch's own evidence doesn't echo the cutoff back.
+    expect(hasCodeAt).toHaveBeenCalledWith(SPENDER, 0n)
+  })
+
   it('does NOT fire for a contract that predates the window', async () => {
     vi.mocked(hasCodeAt).mockResolvedValue(true)
     const verdict = await youngSpender.evaluate(ctx())
@@ -113,6 +127,17 @@ describe('rule: young-spender', () => {
   it('propagates unexpected errors instead of swallowing them', async () => {
     vi.mocked(hasCodeAt).mockRejectedValue(new Error('connection refused'))
     await expect(youngSpender.evaluate(ctx())).rejects.toThrow('connection refused')
+  })
+
+  it('propagates unexpected errors from the deployment-block search too, not just HistoricalStateUnavailable', async () => {
+    // The binary search's own catch only special-cases HistoricalStateUnavailable
+    // (line 149) to report a degraded-but-true verdict. Anything else — a plain
+    // RPC failure — must still be rethrown (line 157), not swallowed into a
+    // false "safe" or "abstained" result.
+    vi.mocked(hasCodeAt).mockResolvedValue(false)
+    vi.mocked(findDeploymentBlock).mockRejectedValue(new Error('rpc exploded'))
+
+    await expect(youngSpender.evaluate(ctx())).rejects.toThrow('rpc exploded')
   })
 })
 

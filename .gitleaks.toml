@@ -1,0 +1,37 @@
+# gitleaks configuration
+#
+# Extends the stock ruleset — this file ADDS an allowlist, it does not replace
+# any rule. Everything gitleaks detects by default is still detected.
+#
+# The one exception below exists because `generic-api-key` fires on Ethereum
+# contract addresses. It is a reasonable heuristic (a 40-character hex string
+# assigned to a const does look like a key) but an on-chain address is a public
+# identifier by construction: the same two addresses in test/chain.test.ts and
+# test/watcher.test.ts are already in README.md, deployments.json,
+# data/watchlist.json, site/index.html, and on Etherscan. There is nothing to
+# leak, and leaving the finding in place would train us to ignore the scanner.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ethereum addresses are public identifiers, not credentials"
+
+# EXACTLY 40 hex characters, terminated by a word boundary — i.e. an address and
+# nothing longer.
+#
+# The `\b` is what makes this safe rather than convenient. A 32-byte private key
+# and a transaction hash are both 64 hex characters, so the boundary after
+# character 40 lands between two hex digits and fails to match: neither can be
+# swallowed by this rule. Verified against a real-shaped private key, an all-f
+# key and a tx hash before this was committed. Do NOT relax the `\b`, and do not
+# extend the length to 64 — that is precisely a private key.
+regexes = ['''0x[0-9a-fA-F]{40}\b''']
+
+# Deliberately NOT allowlisted here:
+#   · `kh_*` organisation API keys — scripts/check-no-credentials.sh also greps
+#     for these, requiring mixed case AND digits so documentation slugs like
+#     kh_execute_contract-call do not false-positive
+#   · anything 64 hex characters long, for the reason above
+#   · the test/ directory as a whole — a blanket path exclusion would stop
+#     scanning files that will keep growing, to silence two known-safe lines

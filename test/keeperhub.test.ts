@@ -181,4 +181,200 @@ describe('getHeldTokens', () => {
     fetchMock.mockImplementation(() => Promise.resolve(response(500, { error: 'down' })))
     expect(await run(kh().getHeldTokens(11155111))).toEqual([])
   })
+
+  it('returns no tokens when the requested chain is absent from the response', async () => {
+    // balances contains data for a different chain than was asked for — the
+    // `chain?.tokens ?? []` fallback, not the try/catch, is what saves this.
+    fetchMock.mockResolvedValue(
+      response(200, {
+        walletAddress: '0xme',
+        balances: [
+          {
+            chainId: 11155111,
+            chainName: 'Ethereum Sepolia',
+            nativeBalance: '0.05',
+            tokens: [{ tokenAddress: '0xheld', symbol: 'USDC', balanceRaw: '1000' }],
+          },
+        ],
+      }),
+    )
+
+    expect(await run(kh().getHeldTokens(84532))).toEqual([])
+  })
+})
+
+/**
+ * fetch REJECTS (throws) on transport failure — DNS, ECONNRESET, TLS — rather
+ * than resolving with a status. That path bypassed the retry policy entirely
+ * until it was folded into the same schedule as a 5xx; these tests pin it.
+ */
+describe('KeeperHub transport-failure retry (fetch rejecting)', () => {
+  it('retries a transport rejection and succeeds on a later attempt', async () => {
+    fetchMock
+      .mockRejectedValueOnce(new Error('ECONNRESET'))
+      .mockResolvedValueOnce(response(200, { hasWallet: true, walletAddress: '0xabc' }))
+
+    const result = await run(kh().getWallet())
+
+    expect(result.walletAddress).toBe('0xabc')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('gives up after the bounded number of attempts', async () => {
+    fetchMock.mockRejectedValue(new Error('ECONNRESET'))
+
+    await expect(run(kh().getWallet())).rejects.toThrow(/unreachable after 5 attempts$/)
+    // initial + 4 retries, same bound as the 5xx/429 path
+    expect(fetchMock).toHaveBeenCalledTimes(5)
+  })
+
+  it('preserves the original transport error as the cause of the thrown error', async () => {
+    const original = new Error('ECONNRESET')
+    fetchMock.mockRejectedValue(original)
+
+    const error = (await run(kh().getWallet()).catch((e: unknown) => e)) as Error
+
+    expect(error.cause).toBe(original)
+  })
+})
+
+describe('KeeperHub throttle', () => {
+  it('paces the request once the in-flight window is full, then proceeds', async () => {
+    // RATE_LIMIT_PER_MINUTE is 60; the client throttles once 59 requests are
+    // already recorded within the last minute, waiting out the window before
+    // letting the 60th fire.
+    // A fresh Response per call — a single shared instance can't have its
+    // body read 60 times.
+    fetchMock.mockImplementation(() => Promise.resolve(response(200, { hasWallet: true })))
+    const client = kh()
+
+    for (let i = 0; i < 59; i++) {
+      await client.getWallet()
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(59)
+
+    const result = await run(client.getWallet())
+
+    expect(result).toEqual({ hasWallet: true })
+    expect(fetchMock).toHaveBeenCalledTimes(60)
+  })
+})
+
+describe('KeeperHub error detail', () => {
+  it('falls back to statusText when the error body is not JSON, and does not retry a 4xx', async () => {
+    fetchMock.mockResolvedValue(
+      new Response('<html>not json</html>', { status: 402, statusText: 'Payment Required' }),
+    )
+
+    await expect(run(kh().getWallet())).rejects.toMatchObject({
+      status: 402,
+      message: expect.stringContaining('Payment Required'),
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('treats an empty response body as null rather than failing to parse', async () => {
+    // Some non-2xx responses (a 404 from a proxy in front of the API, say)
+    // carry no body at all — `text` is `''`, which must short-circuit to
+    // `null` rather than going through JSON.parse('').
+    fetchMock.mockResolvedValue(new Response('', { status: 404, statusText: 'Not Found' }))
+
+    await expect(run(kh().getWallet())).rejects.toMatchObject({
+      status: 404,
+      body: null,
+      message: expect.stringContaining('Not Found'),
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('KeeperHub read/write wrappers', () => {
+  it('getChains reads supported networks', async () => {
+    fetchMock.mockResolvedValue(
+      response(200, [{ chainId: 11155111, name: 'Ethereum Sepolia', explorerUrl: 'https://sepolia.etherscan.io' }]),
+    )
+
+    const chains = await run(kh().getChains())
+
+    expect(chains).toEqual([
+      { chainId: 11155111, name: 'Ethereum Sepolia', explorerUrl: 'https://sepolia.etherscan.io' },
+    ])
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://example.test/api/chains')
+    expect(fetchMock.mock.calls[0]![1].method).toBe('GET')
+  })
+
+  it('readContract POSTs a view call with simulate omitted', async () => {
+    fetchMock.mockResolvedValue(response(200, { result: '1000' }))
+
+    const result = await run(
+      kh().readContract({ contractAddress: '0xtoken', functionName: 'balanceOf', functionArgs: ['0xowner'] }),
+    )
+
+    expect(result).toEqual({ result: '1000' })
+    expect(fetchMock.mock.calls[0]![1].method).toBe('POST')
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string) as Record<string, unknown>
+    expect(body['functionName']).toBe('balanceOf')
+    expect(body).not.toHaveProperty('simulate')
+  })
+
+  it('checkAndExecute nests the check, condition, and action bodies and reports whether it executed', async () => {
+    fetchMock.mockResolvedValue(
+      response(200, {
+        executed: true,
+        executionId: 'exec-1',
+        status: 'completed',
+        transactionHash: '0xhash',
+        condition: { met: true, observedValue: '500', targetValue: '0', operator: 'gt' },
+      }),
+    )
+
+    const result = await run(
+      kh().checkAndExecute({
+        check: { contractAddress: '0xtoken', functionName: 'allowance', functionArgs: ['0xowner', '0xspender'] },
+        condition: { operator: 'gt', value: '0' },
+        action: { contractAddress: '0xtoken', functionName: 'approve', functionArgs: ['0xspender', '0'] },
+        idempotencyKey: 'revoke-1',
+      }),
+    )
+
+    expect(result.executed).toBe(true)
+    expect(result.condition.operator).toBe('gt')
+
+    const headers = fetchMock.mock.calls[0]![1].headers as Record<string, string>
+    expect(headers['Idempotency-Key']).toBe('revoke-1')
+
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string) as Record<string, unknown>
+    expect(body['functionName']).toBe('allowance')
+    expect(body['condition']).toEqual({ operator: 'gt', value: '0' })
+    expect((body['action'] as Record<string, unknown>)['functionName']).toBe('approve')
+  })
+
+  it('getExecutionStatus reads the audit record for an execution id', async () => {
+    fetchMock.mockResolvedValue(
+      response(200, { executionId: 'exec-1', status: 'completed', gasUsedWei: '21000', retryCount: 0 }),
+    )
+
+    const status = await run(kh().getExecutionStatus('exec-1'))
+
+    expect(status.status).toBe('completed')
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://example.test/api/execute/exec-1/status')
+    expect(fetchMock.mock.calls[0]![1].method).toBe('GET')
+  })
+
+  it('includes value and gasLimitMultiplier in the contract body when given', async () => {
+    fetchMock.mockResolvedValue(response(200, { executionId: 'x', status: 'completed' }))
+
+    await run(
+      kh().writeContract({
+        contractAddress: '0xtoken',
+        functionName: 'deposit',
+        value: '1000000000000000000',
+        gasLimitMultiplier: '1.2',
+      }),
+    )
+
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string) as Record<string, unknown>
+    expect(body['value']).toBe('1000000000000000000')
+    expect(body['gasLimitMultiplier']).toBe('1.2')
+  })
 })
