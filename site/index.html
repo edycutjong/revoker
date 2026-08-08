@@ -49,6 +49,14 @@
   --prose-sm:600px;   /* .9-.95rem text */
   --prose-xs:560px;   /* .85-.9rem text inside a padded panel */
   --head-h:52px;      /* sticky header height → anchor scroll offset */
+  /* ambient background layer — the blue this agent acts WITH, the red it acts
+     AGAINST. Kept far below text contrast so nothing on top of it moves. */
+  --grid-line:rgba(255,255,255,.038);
+  --aurora-a:rgba(78,161,255,.30);
+  --aurora-b:rgba(255,92,92,.16);
+  --aurora-c:rgba(53,208,127,.09);
+  --beam:rgba(78,161,255,.11);      /* spotlight from above the masthead */
+  --horizon:rgba(78,161,255,.34);   /* hairline where the glow meets the page */
 }
 @media (prefers-color-scheme: light){
   :root{
@@ -63,6 +71,14 @@
     --warn-dim:rgba(138,90,0,.08);     --warn-line:rgba(138,90,0,.35);
     --accent-dim:rgba(11,98,208,.07);  --accent-line:rgba(11,98,208,.35);
     --shadow:0 14px 40px -22px rgba(22,27,35,.25);
+    /* light mode needs a darker grid and weaker blooms — on a near-white page
+       the same alphas read as smudges rather than depth */
+    --grid-line:rgba(22,27,35,.05);
+    --aurora-a:rgba(11,98,208,.14);
+    --aurora-b:rgba(194,46,46,.075);
+    --aurora-c:rgba(13,122,69,.055);
+    --beam:rgba(11,98,208,.06);
+    --horizon:rgba(11,98,208,.20);
   }
 }
 *{box-sizing:border-box}
@@ -72,7 +88,66 @@ body{
   margin:0; background:var(--bg); color:var(--text);
   font:16px/1.65 var(--sans);
   -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  position:relative;            /* anchors .bg-ambient to the page, not the viewport */
+  overflow-x:hidden;            /* the aurora bleeds past 100% width by design */
 }
+
+/* ---------- ambient background ---------- */
+/* One decorative layer behind the masthead and hero: two slow aurora blooms
+   over a faint grid, the whole thing masked out before the first content
+   section so the page settles back to flat --bg and the evidence below reads
+   on a calm surface. Cosmetic only: aria-hidden, pointer-events:none, and it
+   carries no information the page needs. */
+.bg-ambient{
+  position:absolute; top:0; left:0; right:0; height:860px;
+  z-index:0; pointer-events:none; overflow:hidden;
+  /* a broad spotlight from above the masthead, so the headline sits in light */
+  background:radial-gradient(72% 46% at 50% -8%, var(--beam), transparent 70%);
+  -webkit-mask-image:linear-gradient(180deg,#000 0%,#000 38%,transparent 100%);
+          mask-image:linear-gradient(180deg,#000 0%,#000 38%,transparent 100%);
+}
+/* the horizon: one bright hairline under the hero where the glow stops.
+   Gives the section a defined edge instead of an indefinite fade. */
+.hero::after{
+  content:""; display:block; position:absolute; left:0; right:0; bottom:0; height:1px;
+  background:linear-gradient(90deg, transparent, var(--horizon) 22%, var(--horizon) 78%, transparent);
+  pointer-events:none;
+}
+.hero{position:relative}
+/* the grid — a coordinate plane, faint enough to read as texture not decoration */
+.bg-ambient::before{
+  content:""; position:absolute; inset:0;
+  background-image:
+    linear-gradient(to right,  var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size:68px 68px;
+  /* fade the grid toward the horizon so it never fights the headline */
+  -webkit-mask-image:radial-gradient(120% 78% at 50% 0%, #000 30%, transparent 78%);
+          mask-image:radial-gradient(120% 78% at 50% 0%, #000 30%, transparent 78%);
+}
+/* the blooms — oversized and blurred so no gradient banding is visible */
+.bg-ambient::after{
+  content:""; position:absolute; left:-15%; right:-15%; top:-42%; height:150%;
+  background:
+    radial-gradient(42% 46% at 24% 34%, var(--aurora-a), transparent 68%),
+    radial-gradient(38% 42% at 79% 22%, var(--aurora-b), transparent 70%),
+    radial-gradient(46% 38% at 54% 62%, var(--aurora-c), transparent 72%);
+  filter:blur(26px);
+  animation:aurora 26s ease-in-out infinite alternate;
+  will-change:transform;
+}
+@keyframes aurora{
+  from{ transform:translate3d(-1.6%, 0, 0) scale(1) }
+  to  { transform:translate3d( 1.6%, -2.2%, 0) scale(1.07) }
+}
+@media (prefers-reduced-motion: reduce){
+  .bg-ambient::after{ animation:none }
+}
+
+/* everything real sits above the ambient layer. .site-head is left alone: it is
+   already position:sticky with z-index:50, and re-declaring position here would
+   silently kill the sticky behaviour depending on rule order. */
+main, footer{ position:relative; z-index:1 }
 ::selection{background:var(--accent); color:var(--accent-ink)}
 a{color:var(--accent); text-decoration:none}
 a:hover{text-decoration:underline; text-underline-offset:3px; text-decoration-thickness:1px}
@@ -457,6 +532,7 @@ td.hot{color:var(--text); font-weight:700}
 </script>
 </head>
 <body>
+<div class="bg-ambient" aria-hidden="true"></div>
 <a class="skip" href="#main">Skip to content</a>
 
 <header class="site-head">
