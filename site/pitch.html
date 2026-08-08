@@ -353,10 +353,14 @@ h2{font-size:72px; line-height:1.06}
 .ask-links{display:flex; gap:14px 44px; flex-wrap:wrap; margin-top:38px;
   font:19px/1.5 var(--font-mono)}
 .ask-links span{color:var(--muted)}
-.qr-ph{width:280px; height:280px; border:2px dashed var(--line); border-radius:16px;
-  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px;
-  color:var(--muted); font:17px/1.4 var(--font-mono); text-align:center; padding:20px}
-.qr-ph svg{opacity:.5}
+.qr{width:280px; display:flex; flex-direction:column; align-items:center; gap:12px;
+  text-decoration:none; color:var(--muted); font:16px/1.4 var(--font-mono)}
+/* white plate: QR scanners are far more reliable with dark modules on light than
+   inverted, so the code keeps its own background regardless of slide theme */
+.qr svg{width:280px; height:280px; background:#fff; border-radius:16px; padding:14px;
+  box-shadow:0 18px 50px -18px rgba(0,0,0,.55)}
+.qr span{letter-spacing:.01em}
+.qr:hover span{color:var(--accent)}
 .closer{font-size:33px; line-height:1.35; text-align:center; text-wrap:balance; max-width:480px}
 .closer b{color:var(--ok); font-weight:700}
 
@@ -738,16 +742,26 @@ h2{font-size:72px; line-height:1.06}
       </div>
       <p class="expected">Expected output: <code>0</code></p>
       <div class="ask-links">
-        <span><a href="https://github.com/edycutjong/revoker" rel="noopener">github.com/edycutjong/revoker</a> &middot; public before judging</span>
+        <span><a href="https://github.com/edycutjong/revoker" rel="noopener">github.com/edycutjong/revoker</a> &middot; public, MIT</span>
         <span><a href="https://dorahacks.io/hackathon/agents-onchain" rel="noopener">dorahacks.io/hackathon/agents-onchain</a></span>
       </div>
     </div>
     <div class="col-r">
-      <!-- SWAP: replace this placeholder with a real QR code (inline SVG) pointing at the repo -->
-      <div class="qr-ph">
-        <svg width="54" height="54" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M14 14h3v3h-3zM18 18h3v3h-3z" fill="currentColor"/></svg>
-        <span>QR &rarr; repo<br>(swap in when generated)</span>
-      </div>
+<!-- QR → https://revoker.edycu.dev, generated with segno (ECC Q, 25% recovery) and
+           inlined as one path: the page forbids remote images, and a QR fetched
+           from an API would break the moment that API does — on stage, silently.
+           Points at the site rather than the repo because it is the shortest URL
+           of the three (sparsest symbol, best scan off a projector) and it is the
+           hub: the video, the proof timeline, the benchmark and the repo all hang
+           off it. -->
+      <a class="qr" href="https://revoker.edycu.dev" rel="noopener"
+         aria-label="Scan or open revoker.edycu.dev">
+        <svg viewBox="0 0 33 33" role="img" aria-hidden="true" shape-rendering="crispEdges">
+          <rect width="33" height="33" fill="#ffffff"/>
+          <path d="M2 2h7v1h-7zM12 2h1v1h-1zM16 2h1v1h-1zM20 2h1v1h-1zM22 2h1v1h-1zM24 2h7v1h-7zM2 3h1v1h-1zM8 3h1v1h-1zM10 3h1v1h-1zM12 3h2v1h-2zM15 3h3v1h-3zM20 3h3v1h-3zM24 3h1v1h-1zM30 3h1v1h-1zM2 4h1v1h-1zM4 4h3v1h-3zM8 4h1v1h-1zM10 4h1v1h-1zM15 4h1v1h-1zM22 4h1v1h-1zM24 4h1v1h-1zM26 4h3v1h-3zM30 4h1v1h-1zM2 5h1v1h-1zM4 5h3v1h-3zM8 5h1v1h-1zM12 5h5v1h-5zM18 5h2v1h-2zM21 5h2v1h-2zM24 5h1v1h-1zM26 5h3v1h-3zM30 5h1v1h-1zM2 6h1v1h-1zM4 6h3v1h-3zM8 6h1v1h-1zM18 6h2v1h-2zM21 6h1v1h-1zM24 6h1v1h-1zM26 6h3v1h-3zM30 6h1v1h-1zM2 7h1v1h-1zM8 7h1v1h-1zM11 7h3v1h-3zM15 7h3v1h-3zM21 7h2v1h-2zM24 7h1v1h-1zM30 7h1v1h-1zM2 8h7v1h-7zM10 8h1v1h-1zM12 8h1v1h-1zM14 8h1v1h-1zM16 8h1v1h-1zM18 8h1v1h-1zM20 8h1v1h-1zM22 8h1v1h-1zM24 8h7v1h-7zM12 9h1v1h-1zM14 9h2v1h-2zM19 9h2v1h-2zM3 10h3v1h-3zM7 10h2v1h-2zM11 10h2v1h-2zM14 10h3v1h-3zM18 10h1v1h-1zM21 10h1v1h-1zM28 10h2v1h-2zM2 11h1v1h-1zM7 11h1v1h-1zM11 11h1v1h-1zM14 11h1v1h-1zM17 11h3v1h-3zM23 11h5v1h-5zM30 11h1v1h-1zM5 12h1v1h-1zM7 12h2v1h-2zM10 12h1v1h-1zM13 12h1v1h-1zM15 12h1v1h-1zM20 12h1v1h-1zM22 12h1v1h-1zM24 12h3v1h-3zM28 12h2v1h-2zM3 13h1v1h-1zM6 13h1v1h-1zM10 13h1v1h-1zM16 13h1v1h-1zM18 13h1v1h-1zM20 13h2v1h-2zM25 13h2v1h-2zM30 13h1v1h-1zM3 14h3v1h-3zM8 14h1v1h-1zM11 14h2v1h-2zM15 14h1v1h-1zM19 14h1v1h-1zM23 14h1v1h-1zM25 14h1v1h-1zM27 14h4v1h-4zM2 15h3v1h-3zM7 15h1v1h-1zM9 15h3v1h-3zM15 15h1v1h-1zM17 15h1v1h-1zM21 15h1v1h-1zM24 15h2v1h-2zM27 15h2v1h-2zM30 15h1v1h-1zM2 16h1v1h-1zM4 16h2v1h-2zM7 16h2v1h-2zM10 16h3v1h-3zM15 16h1v1h-1zM19 16h3v1h-3zM23 16h5v1h-5zM29 16h2v1h-2zM2 17h5v1h-5zM9 17h2v1h-2zM13 17h3v1h-3zM17 17h5v1h-5zM23 17h1v1h-1zM26 17h2v1h-2zM3 18h3v1h-3zM7 18h3v1h-3zM12 18h4v1h-4zM17 18h4v1h-4zM22 18h2v1h-2zM25 18h3v1h-3zM29 18h1v1h-1zM5 19h2v1h-2zM9 19h1v1h-1zM11 19h1v1h-1zM13 19h1v1h-1zM15 19h1v1h-1zM18 19h2v1h-2zM21 19h1v1h-1zM27 19h2v1h-2zM2 20h1v1h-1zM4 20h7v1h-7zM12 20h1v1h-1zM15 20h1v1h-1zM17 20h4v1h-4zM24 20h4v1h-4zM4 21h1v1h-1zM12 21h2v1h-2zM15 21h1v1h-1zM19 21h3v1h-3zM23 21h2v1h-2zM27 21h3v1h-3zM3 22h1v1h-1zM5 22h1v1h-1zM7 22h7v1h-7zM15 22h2v1h-2zM18 22h11v1h-11zM10 23h3v1h-3zM14 23h2v1h-2zM20 23h3v1h-3zM26 23h2v1h-2zM29 23h2v1h-2zM2 24h7v1h-7zM12 24h1v1h-1zM14 24h1v1h-1zM16 24h1v1h-1zM19 24h1v1h-1zM21 24h2v1h-2zM24 24h1v1h-1zM26 24h1v1h-1zM28 24h2v1h-2zM2 25h1v1h-1zM8 25h1v1h-1zM10 25h3v1h-3zM14 25h1v1h-1zM16 25h3v1h-3zM20 25h1v1h-1zM22 25h1v1h-1zM26 25h1v1h-1zM2 26h1v1h-1zM4 26h3v1h-3zM8 26h1v1h-1zM11 26h1v1h-1zM13 26h2v1h-2zM17 26h1v1h-1zM20 26h1v1h-1zM22 26h7v1h-7zM30 26h1v1h-1zM2 27h1v1h-1zM4 27h3v1h-3zM8 27h1v1h-1zM10 27h1v1h-1zM12 27h1v1h-1zM14 27h1v1h-1zM16 27h1v1h-1zM18 27h4v1h-4zM26 27h1v1h-1zM28 27h2v1h-2zM2 28h1v1h-1zM4 28h3v1h-3zM8 28h1v1h-1zM10 28h2v1h-2zM13 28h2v1h-2zM17 28h2v1h-2zM20 28h1v1h-1zM22 28h1v1h-1zM25 28h1v1h-1zM28 28h1v1h-1zM30 28h1v1h-1zM2 29h1v1h-1zM8 29h1v1h-1zM10 29h1v1h-1zM12 29h1v1h-1zM14 29h1v1h-1zM18 29h1v1h-1zM21 29h2v1h-2zM26 29h2v1h-2zM29 29h1v1h-1zM2 30h7v1h-7zM11 30h1v1h-1zM14 30h2v1h-2zM17 30h2v1h-2zM20 30h4v1h-4zM25 30h1v1h-1zM27 30h1v1h-1zM29 30h1v1h-1z" fill="#0a0c10"/>
+        </svg>
+        <span>revoker.edycu.dev</span>
+      </a>
       <p class="closer">The drainer fired.<br>It found <b>an empty room</b>.</p>
     </div>
     <aside class="speaker-notes">Don't take the deck's word for any of it. Run the cast call — the allowance Revoker zeroed is still zero, on a public RPC, right now. Every bar and every number links to a transaction. The drainer fired, exactly as its author intended — and it found an empty room. That's what execution looks like.</aside>

@@ -18,7 +18,7 @@
   [![Live Demo](https://img.shields.io/badge/🌐_Live-Demo-06b6d4?style=for-the-badge)](https://revoker.edycu.dev)
   [![Pitch Deck](https://img.shields.io/badge/📊_Pitch-Deck-f59e0b?style=for-the-badge)](https://revoker.edycu.dev/pitch.html)
   [![Demo Video](https://img.shields.io/badge/🎬_Demo-Video-ef4444?style=for-the-badge)](https://youtu.be/6q7XvVC5nK4)
-  [![BUIDL](https://img.shields.io/badge/DoraHacks-BUIDL-8b5cf6?style=for-the-badge)](FILL_BUIDL_URL)
+  [![BUIDL](https://img.shields.io/badge/DoraHacks-BUIDL-8b5cf6?style=for-the-badge)](https://dorahacks.io/buidl/47528)
   [![Agents Onchain](https://img.shields.io/badge/Hackathon-Agents_Onchain-6366f1?style=for-the-badge)](https://dorahacks.io/hackathon/agents-onchain)
 
   <br/>
