@@ -27,9 +27,13 @@ const ENV_KEYS = [
   'SEPOLIA_RPC_URL',
   'KH_EXPLORER_BASE',
   'DEPLOYER_PRIVATE_KEY',
+  'PORT',
+  'REVOKER_AUDIT_LOG',
+  'REVOKER_DEMO',
 ] as const
 
 const savedEnv: Partial<Record<(typeof ENV_KEYS)[number], string>> = {}
+let savedArgv: string[]
 
 beforeEach(async () => {
   vi.resetModules()
@@ -37,6 +41,10 @@ beforeEach(async () => {
     savedEnv[key] = process.env[key]
     delete process.env[key]
   }
+  // config.ts mutates process.argv in demo mode; every test gets a clean one.
+  savedArgv = process.argv
+  process.argv = ['node', 'src/index.ts']
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined)
   // Default fixture: neither credentials file exists on disk.
   await mockFiles({})
 })
@@ -46,6 +54,8 @@ afterEach(() => {
     if (savedEnv[key] === undefined) delete process.env[key]
     else process.env[key] = savedEnv[key]
   }
+  process.argv = savedArgv
+  vi.mocked(console.warn).mockRestore()
 })
 
 /**
@@ -238,6 +248,143 @@ describe('defaults when nothing is configured', () => {
     const { config } = await import('../src/config.js')
     expect(config.chainId).toBe(1)
     expect(typeof config.chainId).toBe('number')
+  })
+})
+
+describe('demo mode (REVOKER_DEMO)', () => {
+  const DEMO_WALLET = '0x5E2e5Fd3aD7fDC9B94482930db8b5F45E439bab7'
+  const DEMO_KEY = 'kh_DEMO_MODE_NOT_A_REAL_KEY'
+
+  it('is off unless REVOKER_DEMO is set', async () => {
+    const { config } = await import('../src/config.js')
+    expect(config.demo).toBe(false)
+    expect(() => config.apiKey).toThrow(/Missing KH_API_KEY/)
+    expect(process.argv).not.toContain('--dry-run')
+  })
+
+  it('serves the public demo wallet and a sentinel key instead of throwing', async () => {
+    process.env['REVOKER_DEMO'] = '1'
+    const { config } = await import('../src/config.js')
+
+    expect(config.demo).toBe(true)
+    expect(config.walletAddress).toBe(DEMO_WALLET)
+    expect(config.apiKey).toBe(DEMO_KEY)
+  })
+
+  it('ignores real credentials, so demo mode cannot half-attach to a real org', async () => {
+    // The substitution is unconditional by design: a demo that quietly used the
+    // key you happened to have configured would be a demo that can execute.
+    process.env['REVOKER_DEMO'] = '1'
+    process.env['KH_API_KEY'] = 'kh_a_genuine_org_key'
+    process.env['KH_WALLET_ADDRESS'] = '0x' + 'ab'.repeat(20)
+
+    const { config } = await import('../src/config.js')
+    expect(config.apiKey).toBe(DEMO_KEY)
+    expect(config.walletAddress).toBe(DEMO_WALLET)
+  })
+
+  it('still refuses DEPLOYER_PRIVATE_KEY — seeding is not part of the demo', async () => {
+    // `pnpm seed` deploys contracts and arms a live approval. Demo mode must
+    // not make that command one env var easier to reach.
+    process.env['REVOKER_DEMO'] = '1'
+    const { config } = await import('../src/config.js')
+    expect(() => config.deployerPrivateKey).toThrow(/Missing DEPLOYER_PRIVATE_KEY/)
+  })
+
+  it('points a stuck user at demo mode in the error it throws', async () => {
+    const { config } = await import('../src/config.js')
+    expect(() => config.apiKey).toThrow(/REVOKER_DEMO=1/)
+  })
+
+  it('forces --dry-run on an ARMED invocation, so demo mode can execute nothing', async () => {
+    // The proof that the guarantee does not depend on the demo script's argv:
+    // this is `REVOKER_DEMO=1 pnpm watch`, typed by hand, with no flags at all.
+    process.argv = ['node', 'src/index.ts']
+    process.env['REVOKER_DEMO'] = '1'
+
+    const { config } = await import('../src/config.js')
+
+    // index.ts / server.ts / mcp.ts all decide ARMED vs DRY RUN from argv, and
+    // all of them import config.js — which ESM evaluates before their own body.
+    expect(process.argv).toContain('--dry-run')
+    expect(new Set(process.argv.slice(2)).has('--dry-run')).toBe(true)
+
+    // ...and the second, independent guarantee: even a bypassed argv gate hands
+    // KeeperHub a key no organisation will ever accept, so nothing can sign.
+    expect(config.apiKey).toBe(DEMO_KEY)
+  })
+
+  it('does not duplicate --dry-run when the flag is already there', async () => {
+    process.argv = ['node', 'src/index.ts', '--dry-run', '--once']
+    process.env['REVOKER_DEMO'] = '1'
+
+    await import('../src/config.js')
+
+    expect(process.argv.filter((a) => a === '--dry-run')).toHaveLength(1)
+  })
+
+  it('announces itself on stderr, never stdout — mcp.ts speaks JSON-RPC on stdout', async () => {
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    process.env['REVOKER_DEMO'] = '1'
+
+    await import('../src/config.js')
+
+    const warned = vi.mocked(console.warn).mock.calls.map((c: unknown[]) => String(c[0])).join('\n')
+    expect(warned).toContain('DEMO MODE')
+    expect(warned).toContain('No credentials are configured')
+    expect(warned).toContain('--dry-run is FORCED ON')
+    expect(warned).toContain(DEMO_KEY)
+    expect(warned).toContain(DEMO_WALLET)
+    expect(stdout).not.toHaveBeenCalled()
+
+    stdout.mockRestore()
+  })
+})
+
+describe('PORT', () => {
+  it('defaults to 3000', async () => {
+    const { config } = await import('../src/config.js')
+    expect(config.port).toBe(3000)
+  })
+
+  it('reads PORT from the environment', async () => {
+    process.env['PORT'] = '4321'
+    const { config } = await import('../src/config.js')
+    expect(config.port).toBe(4321)
+  })
+
+  it('reads PORT from ~/.config/keeperhub/env, as .env.example promises', async () => {
+    await mockFiles({ keeperhub: 'PORT=8088' })
+    const { config } = await import('../src/config.js')
+    expect(config.port).toBe(8088)
+  })
+})
+
+describe('REVOKER_AUDIT_LOG', () => {
+  it('publishes the file-resolved value into the environment for audit.ts', async () => {
+    // audit.ts reads process.env directly so it can stay dependency-free; the
+    // documented resolution chain still has to apply to it.
+    await mockFiles({ keeperhub: 'REVOKER_AUDIT_LOG=/tmp/from-keeperhub.jsonl' })
+    await import('../src/config.js')
+    expect(process.env['REVOKER_AUDIT_LOG']).toBe('/tmp/from-keeperhub.jsonl')
+
+    const { auditLogPath } = await import('../src/audit.js')
+    expect(auditLogPath()).toBe('/tmp/from-keeperhub.jsonl')
+  })
+
+  it('never overrides an explicit process.env value', async () => {
+    process.env['REVOKER_AUDIT_LOG'] = '/tmp/from-shell.jsonl'
+    await mockFiles({ keeperhub: 'REVOKER_AUDIT_LOG=/tmp/from-keeperhub.jsonl' })
+    await import('../src/config.js')
+    expect(process.env['REVOKER_AUDIT_LOG']).toBe('/tmp/from-shell.jsonl')
+  })
+
+  it('leaves it unset when no file defines it, so audit.ts keeps its own default', async () => {
+    await import('../src/config.js')
+    expect(process.env['REVOKER_AUDIT_LOG']).toBeUndefined()
+
+    const { auditLogPath } = await import('../src/audit.js')
+    expect(auditLogPath()).toBe('audit/revoker.jsonl')
   })
 })
 

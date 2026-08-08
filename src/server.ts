@@ -17,9 +17,24 @@ import { Watcher } from './watcher.js'
  *
  *   pnpm verify              watch live, stream to the dashboard
  *   pnpm verify -- --dry-run detect and stream, execute nothing
+ *   pnpm demo:verify         replay a recorded run — no credentials, no chain
  */
 
-const PORT = Number(process.env['PORT'] ?? 3000)
+const PORT = config.port
+
+/**
+ * A curated, verbatim excerpt of audit/revoker.jsonl — four real runs against
+ * Sepolia, with real transaction hashes. The trail itself is gitignored, so
+ * without this file a judge cloning the repo would see none of it.
+ */
+const REPLAY_FILE = new URL('../data/demo-run.jsonl', import.meta.url)
+
+/**
+ * Cadence for --replay. The recorded `ts` on every row is left untouched and is
+ * what the dashboard prints; only the spacing between rows is compressed,
+ * because the four runs span five and a half hours of wall clock.
+ */
+const REPLAY_INTERVAL_MS = 500
 
 /** Recent decisions, replayed to a browser that connects mid-run. */
 const history: AuditEntry[] = []
@@ -84,6 +99,83 @@ function loadWatchlist(chainId: number): string[] {
   }
 }
 
+/**
+ * The recorded run, parsed line by line for the same reason loadHistory() is:
+ * one unreadable row must not cost the whole replay.
+ */
+function loadReplay(): AuditEntry[] {
+  let raw: string
+  try {
+    raw = readFileSync(REPLAY_FILE, 'utf8')
+  } catch {
+    return []
+  }
+
+  const entries: AuditEntry[] = []
+  for (const line of raw.split('\n')) {
+    if (line.length === 0) continue
+    try {
+      entries.push(JSON.parse(line) as AuditEntry)
+    } catch {
+      // Skip the row, keep the timeline.
+    }
+  }
+  return entries
+}
+
+/**
+ * Stamp the served dashboard as a replay.
+ *
+ * public/verify.html has one connection indicator and it reads "live" the
+ * moment the SSE stream opens — which during a replay is true of the stream and
+ * false of the agent. A judge who mistakes a recording for a running agent has
+ * been misled by us, and this project's whole claim is that it does not
+ * overstate. The label is therefore applied to the page, not left to a sentence
+ * in a README nobody reads next to the screen.
+ *
+ * Injected here rather than edited into the HTML so the live dashboard keeps
+ * exactly one code path: there is no "replay" state in verify.html that could
+ * be reached by accident during a real run.
+ */
+function labelAsReplay(page: string, entries: AuditEntry[]): string {
+  // Rendered into HTML, so reduce it to the character set an ISO timestamp
+  // actually uses rather than trusting the data file.
+  const recordedAt = (entries[0]?.ts ?? '').replace(/[^0-9:.TZ-]/g, '') || 'an earlier run'
+
+  const banner = `
+<style>
+  body { padding-top: 30px; }
+  #replay-flag {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 99;
+    background: #ffb547; color: #0a0c10; padding: 6px 14px;
+    font: 600 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: .02em; text-align: center;
+  }
+</style>
+<div id="replay-flag">
+  REPLAY — recorded run of ${recordedAt}, played back from data/demo-run.jsonl.
+  This is NOT a live agent. Nothing is being watched and nothing is executing.
+</div>
+<script>
+  // The header dot reports the SSE connection, which genuinely is live; the
+  // agent is not. Hold the label steady so the two can never be confused.
+  ;(function () {
+    var conn = document.getElementById('conn')
+    var dot = document.getElementById('dot')
+    function relabel() {
+      if (conn.textContent !== 'replay') conn.textContent = 'replay'
+      dot.classList.remove('live', 'armed')
+    }
+    new MutationObserver(relabel).observe(conn, { childList: true, characterData: true, subtree: true })
+    new MutationObserver(relabel).observe(dot, { attributes: true, attributeFilter: ['class'] })
+    relabel()
+  })()
+</script>
+`
+
+  return page.replace('</body>', `${banner}</body>`)
+}
+
 function loadDenylist(): string[] {
   try {
     const raw = readFileSync(new URL('../data/denylist.json', import.meta.url), 'utf8')
@@ -124,9 +216,56 @@ function handleStream(req: IncomingMessage, res: ServerResponse): void {
   })
 }
 
+/**
+ * Stream a recorded run through the same broadcast() the live agent uses, so
+ * the dashboard exercises its real code path rather than a demo-only one.
+ * Returns the stop handle, matching the watcher it stands in for.
+ */
+function startReplay(entries: AuditEntry[]): () => void {
+  let next = 0
+  const timer = setInterval(() => {
+    const entry = entries[next]
+    next += 1
+
+    if (entry === undefined) {
+      clearInterval(timer)
+      console.log(`  replay complete — ${entries.length} recorded entries`)
+      return
+    }
+
+    // Marked on the way out, never in the file: data/demo-run.jsonl stays a
+    // byte-for-byte excerpt of the real trail, and every row that reaches a
+    // browser still carries what it is.
+    broadcast({ ...entry, replay: true })
+  }, REPLAY_INTERVAL_MS)
+
+  return () => clearInterval(timer)
+}
+
+function startWatching(dryRun: boolean): () => void {
+  loadHistory()
+  onAudit(broadcast)
+
+  const watcher = new Watcher({
+    owner: config.walletAddress,
+    tokens: loadWatchlist(config.chainId),
+    denylist: loadDenylist(),
+    dryRun,
+  })
+
+  void watcher.run()
+
+  return () => watcher.stop()
+}
+
 function main(): void {
-  const dryRun = process.argv.includes('--dry-run')
-  const page = readFileSync(new URL('../public/verify.html', import.meta.url), 'utf8')
+  const replay = process.argv.includes('--replay')
+  // A replay watches nothing and calls nothing, so it is dry by construction.
+  const dryRun = replay || process.argv.includes('--dry-run')
+
+  const recorded = replay ? loadReplay() : []
+  const rawPage = readFileSync(new URL('../public/verify.html', import.meta.url), 'utf8')
+  const page = replay ? labelAsReplay(rawPage, recorded) : rawPage
 
   const meta = {
     wallet: config.walletAddress,
@@ -134,6 +273,18 @@ function main(): void {
     chainId: config.chainId,
     explorer: config.explorerBase,
     dryRun,
+    // Served to anything that reads the API rather than the page — a scripted
+    // check, a screenshot pipeline, another agent — so "is this live?" has a
+    // machine-readable answer too.
+    replay,
+    ...(replay
+      ? {
+          replaySource: 'data/demo-run.jsonl',
+          replayEntries: recorded.length,
+          recordedFrom: recorded[0]?.ts,
+          recordedTo: recorded.at(-1)?.ts,
+        }
+      : {}),
   }
 
   const server = createServer((req, res) => {
@@ -157,28 +308,24 @@ function main(): void {
     res.end('not found')
   })
 
-  loadHistory()
-  onAudit(broadcast)
-
   server.listen(PORT, () => {
     console.log('Revoker — /verify dashboard')
     console.log(`  http://localhost:${PORT}/verify`)
-    console.log(`  watching ${config.walletAddress} on ${config.network}`)
-    console.log(`  mode     ${dryRun ? 'DRY RUN' : 'ARMED'}`)
+    if (replay) {
+      console.log(`  mode     REPLAY — ${recorded.length} recorded entries from data/demo-run.jsonl`)
+      console.log('           a recording of past runs, NOT a live agent: nothing is watched,')
+      console.log('           nothing is executed, no credentials are used')
+    } else {
+      console.log(`  watching ${config.walletAddress} on ${config.network}`)
+      console.log(`  mode     ${dryRun ? 'DRY RUN' : 'ARMED'}`)
+    }
     console.log()
   })
 
-  const watcher = new Watcher({
-    owner: config.walletAddress,
-    tokens: loadWatchlist(config.chainId),
-    denylist: loadDenylist(),
-    dryRun,
-  })
-
-  void watcher.run()
+  const stop = replay ? startReplay(recorded) : startWatching(dryRun)
 
   const shutdown = (): void => {
-    watcher.stop()
+    stop()
     server.close()
     process.exit(0)
   }

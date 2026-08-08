@@ -79,12 +79,24 @@ const configMock = {
   network: 'sepolia',
   chainId: 11155111,
   explorerBase: 'https://sepolia.etherscan.io',
+  // A getter, mirroring the real config: server.ts now takes its port from
+  // config.ts rather than reading process.env behind config's back, and the
+  // $PORT tests below have to keep exercising that.
+  get port(): number {
+    return Number(process.env['PORT'] ?? 3000)
+  },
 }
 vi.mock('../src/config.js', () => ({ config: configMock }))
 
+/**
+ * `'real'` passes the read through to the file that actually ships, so the
+ * replay tests exercise data/demo-run.jsonl itself rather than a fixture that
+ * could drift away from it; `'enoent'` forces the missing-file path.
+ */
 const fsState = vi.hoisted(() => ({
   watchlist: undefined as string | undefined,
   denylist: undefined as string | undefined,
+  replay: 'real',
 }))
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
@@ -103,6 +115,13 @@ vi.mock('node:fs', async (importOriginal) => {
           throw Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' })
         }
         return fsState.denylist
+      }
+      if (p.includes('demo-run.jsonl')) {
+        if (fsState.replay === 'enoent') {
+          throw Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' })
+        }
+        if (fsState.replay !== 'real') return fsState.replay
+        return actual.readFileSync(path, enc)
       }
       return actual.readFileSync(path, enc)
     },
@@ -146,6 +165,7 @@ beforeEach(() => {
   fsState.denylist = JSON.stringify({
     addresses: [{ address: '0xSpenderAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' }],
   })
+  fsState.replay = 'real'
 
   originalArgv = process.argv
   vi.spyOn(console, 'log').mockImplementation(() => undefined)
@@ -156,6 +176,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
   delete process.env['REVOKER_AUDIT_LOG']
   delete process.env['PORT']
+  delete process.env['REVOKER_DEMO']
   process.removeAllListeners('SIGINT')
   process.removeAllListeners('SIGTERM')
   vi.restoreAllMocks()
@@ -318,6 +339,9 @@ describe('server.ts — routing', () => {
       chainId: configMock.chainId,
       explorer: configMock.explorerBase,
       dryRun: false,
+      // Present on a live run too, and false: "is this a recording?" must have
+      // a machine-readable answer in both directions, not only the alarming one.
+      replay: false,
     })
   })
 
@@ -580,6 +604,311 @@ describe('server.ts — the dashboard it serves', () => {
       expect(body).toContain(`'${stage}':`)
     }
     expect(body).toMatch(/FAILURE\s*=\s*new Set\(\[[^\]]*'watch\.error'/)
+  })
+})
+
+describe('server.ts — demo mode cannot arm', () => {
+  it('an ARMED invocation under REVOKER_DEMO still builds a dry-run Watcher', async () => {
+    // config.ts injects --dry-run at module load, and every entrypoint imports
+    // it. Loading the REAL module here rather than the mock is the point: this
+    // asserts the production side effect, not a restatement of it.
+    process.argv = ['node', 'src/server.ts'] // no flags at all
+    process.env['REVOKER_DEMO'] = '1'
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    await vi.importActual('../src/config.js')
+    await loadServer()
+
+    expect(process.argv).toContain('--dry-run')
+    expect(watcherMock.instances.at(-1)?.options.dryRun).toBe(true)
+  })
+})
+
+describe('server.ts — --replay', () => {
+  /** One replay tick. */
+  const TICK = 500
+
+  async function loadReplayServer(): Promise<
+    (req: IncomingMessage, res: ServerResponse) => void
+  > {
+    process.argv = [...originalArgv, '--replay']
+    return loadServer()
+  }
+
+  it('watches nothing: no Watcher is constructed at all', async () => {
+    await loadReplayServer()
+    expect(watcherMock.instances).toHaveLength(0)
+    expect(watcherMock.run).not.toHaveBeenCalled()
+  })
+
+  it('does not mix the local durable trail into the recording', async () => {
+    // A judge who has run the agent once locally must not get their own rows
+    // interleaved with the recorded ones: the result would be neither run.
+    writeFileSync(
+      join(dir, 'audit.jsonl'),
+      `${JSON.stringify({ ts: new Date().toISOString(), stage: 'watch.start', owner: '0xlocal' })}\n`,
+    )
+
+    const listener = await loadReplayServer()
+    const req = makeReq('/api/stream')
+    const res = makeRes()
+    listener(req, res as unknown as ServerResponse)
+
+    expect(res.write).not.toHaveBeenCalled()
+    req.emit('close')
+  })
+
+  it('reports itself as a replay in /api/meta, with the recorded window', async () => {
+    const listener = await loadReplayServer()
+    const req = makeReq('/api/meta')
+    const res = makeRes()
+    listener(req, res as unknown as ServerResponse)
+
+    const meta = JSON.parse(res.end.mock.calls[0]?.[0] as string) as Record<string, unknown>
+    expect(meta['replay']).toBe(true)
+    expect(meta['dryRun']).toBe(true)
+    expect(meta['replaySource']).toBe('data/demo-run.jsonl')
+    expect(meta['replayEntries']).toBeGreaterThan(0)
+    expect(String(meta['recordedFrom'])).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    expect(String(meta['recordedTo'])).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+  })
+
+  it('stamps the served page so a recording cannot be read as a live agent', async () => {
+    const listener = await loadReplayServer()
+    const req = makeReq('/verify')
+    const res = makeRes()
+    listener(req, res as unknown as ServerResponse)
+
+    const body = res.end.mock.calls[0]?.[0] as string
+    expect(body).toContain('id="replay-flag"')
+    expect(body).toContain('NOT a live agent')
+    expect(body).toContain('data/demo-run.jsonl')
+    // The header indicator says "live" the moment the SSE stream opens, which
+    // during a replay is true of the stream and false of the agent.
+    expect(body).toContain(`conn.textContent = 'replay'`)
+    expect(body).toContain(`dot.classList.remove('live', 'armed')`)
+    expect(body).toContain('</body>')
+  })
+
+  it('leaves the live dashboard completely unstamped', async () => {
+    const listener = await loadServer()
+    const req = makeReq('/verify')
+    const res = makeRes()
+    listener(req, res as unknown as ServerResponse)
+
+    const body = res.end.mock.calls[0]?.[0] as string
+    expect(body).not.toContain('replay-flag')
+    expect(body).toBe(readFileSync(new URL('../public/verify.html', import.meta.url), 'utf8'))
+  })
+
+  it('streams the recording through broadcast, in order, marked as a replay', async () => {
+    vi.useFakeTimers()
+    try {
+      const listener = await loadReplayServer()
+      const req = makeReq('/api/stream')
+      const res = makeRes()
+      listener(req, res as unknown as ServerResponse)
+      res.write.mockClear()
+
+      await vi.advanceTimersByTimeAsync(TICK * 3)
+
+      const frames = res.write.mock.calls
+        .map((c: unknown[]) => String(c[0]))
+        .filter((f) => f.startsWith('data: '))
+        .map((f) => JSON.parse(f.slice(6)) as Record<string, unknown>)
+
+      expect(frames).toHaveLength(3)
+      // Every row that reaches a browser says what it is...
+      expect(frames.every((f) => f['replay'] === true)).toBe(true)
+      // ...while the recorded timestamps are passed through untouched, so the
+      // dashboard shows when this actually happened.
+      expect(frames[0]?.['stage']).toBe('watch.start')
+      expect(frames[0]?.['ts']).toBe('2026-08-08T01:48:53.069Z')
+
+      req.emit('close')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('replays the whole recording, then stops the timer', async () => {
+    vi.useFakeTimers()
+    try {
+      const listener = await loadReplayServer()
+
+      const metaReq = makeReq('/api/meta')
+      const metaRes = makeRes()
+      listener(metaReq, metaRes as unknown as ServerResponse)
+      const meta = JSON.parse(metaRes.end.mock.calls[0]?.[0] as string) as { replayEntries: number }
+
+      const req = makeReq('/api/stream')
+      const res = makeRes()
+      listener(req, res as unknown as ServerResponse)
+      res.write.mockClear()
+
+      // One extra tick past the end: the interval must clear itself there.
+      await vi.advanceTimersByTimeAsync(TICK * (meta.replayEntries + 1))
+      const delivered = res.write.mock.calls.filter((c: unknown[]) => String(c[0]).startsWith('data: '))
+      expect(delivered).toHaveLength(meta.replayEntries)
+
+      const logged = vi.mocked(console.log).mock.calls.map((c: unknown[]) => String(c[0]))
+      expect(logged).toContain(`  replay complete — ${meta.replayEntries} recorded entries`)
+
+      // Nothing more is ever sent, and the completion notice is not repeated.
+      res.write.mockClear()
+      await vi.advanceTimersByTimeAsync(TICK * 20)
+      expect(res.write.mock.calls.filter((c: unknown[]) => String(c[0]).startsWith('data: '))).toHaveLength(0)
+
+      req.emit('close')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('announces REPLAY on the console instead of a watched address', async () => {
+    await loadReplayServer()
+    const logged = vi.mocked(console.log).mock.calls.map((c: unknown[]) => String(c[0]))
+    expect(logged.some((l) => l.includes('mode     REPLAY'))).toBe(true)
+    expect(logged.some((l) => l.includes('NOT a live agent'))).toBe(true)
+    expect(logged.some((l) => l.includes('watching'))).toBe(false)
+  })
+
+  it('SIGINT stops the replay timer and closes the server', async () => {
+    vi.useFakeTimers()
+    try {
+      const listener = await loadReplayServer()
+      const req = makeReq('/api/stream')
+      const res = makeRes()
+      listener(req, res as unknown as ServerResponse)
+
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+      const handler = process.listeners('SIGINT').at(-1) as (() => void) | undefined
+      handler?.()
+
+      expect(httpMock.serverInstance.close).toHaveBeenCalled()
+      expect(exitSpy).toHaveBeenCalledWith(0)
+
+      res.write.mockClear()
+      await vi.advanceTimersByTimeAsync(TICK * 10)
+      expect(res.write.mock.calls.filter((c: unknown[]) => String(c[0]).startsWith('data: '))).toHaveLength(0)
+
+      req.emit('close')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('degrades to an empty replay when the recording is missing', async () => {
+    fsState.replay = 'enoent'
+
+    const listener = await loadReplayServer()
+    const req = makeReq('/api/meta')
+    const res = makeRes()
+    listener(req, res as unknown as ServerResponse)
+
+    const meta = JSON.parse(res.end.mock.calls[0]?.[0] as string) as Record<string, unknown>
+    expect(meta['replayEntries']).toBe(0)
+    expect(meta['recordedFrom']).toBeUndefined()
+    expect(meta['recordedTo']).toBeUndefined()
+
+    // The banner still has to appear: an empty replay is still not a live run.
+    const pageReq = makeReq('/verify')
+    const pageRes = makeRes()
+    listener(pageReq, pageRes as unknown as ServerResponse)
+    const body = pageRes.end.mock.calls[0]?.[0] as string
+    expect(body).toContain('id="replay-flag"')
+    expect(body).toContain('an earlier run')
+  })
+
+  it('skips an unparseable row instead of losing the recording', async () => {
+    fsState.replay = [
+      JSON.stringify({ ts: '2026-08-08T01:48:53.069Z', stage: 'watch.start' }),
+      '{"ts":"2026-08-08T01:48:54.0',
+      JSON.stringify({ ts: '2026-08-08T01:48:55.000Z', stage: 'watch.scan', block: '11442145' }),
+      '',
+    ].join('\n')
+
+    vi.useFakeTimers()
+    try {
+      const listener = await loadReplayServer()
+      const req = makeReq('/api/stream')
+      const res = makeRes()
+      listener(req, res as unknown as ServerResponse)
+      res.write.mockClear()
+
+      await vi.advanceTimersByTimeAsync(TICK * 4)
+      const frames = res.write.mock.calls
+        .map((c: unknown[]) => String(c[0]))
+        .filter((f) => f.startsWith('data: '))
+      expect(frames).toHaveLength(2)
+
+      req.emit('close')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('data/demo-run.jsonl — the recording that ships', () => {
+  /**
+   * The replay is the only view a judge without credentials gets of the audit
+   * trail, since audit/ is gitignored. If its content ever stops telling the
+   * whole story, the replay quietly becomes a highlight reel.
+   */
+  const entries = readFileSync(new URL('../data/demo-run.jsonl', import.meta.url), 'utf8')
+    .split('\n')
+    .filter((l) => l.length > 0)
+    .map((l) => JSON.parse(l) as Record<string, unknown>)
+
+  it('is a plausible slice: long enough to read as a run, short enough to watch', () => {
+    expect(entries.length).toBeGreaterThanOrEqual(60)
+    expect(entries.length).toBeLessThanOrEqual(120)
+  })
+
+  it('is in chronological order', () => {
+    const timestamps = entries.map((e) => String(e['ts']))
+    expect([...timestamps].sort()).toEqual(timestamps)
+  })
+
+  it('carries a full threat.detected -> revoke.submit -> revoke.confirmed sequence', () => {
+    const stages = entries.map((e) => String(e['stage']))
+    const detected = stages.indexOf('threat.detected')
+    expect(detected).toBeGreaterThanOrEqual(0)
+    expect(stages[detected + 1]).toBe('revoke.submit')
+    expect(stages[detected + 2]).toBe('revoke.confirmed')
+  })
+
+  it('carries real 32-byte transaction hashes the dashboard can link to', () => {
+    const confirmed = entries.filter((e) => e['stage'] === 'revoke.confirmed')
+    expect(confirmed.length).toBeGreaterThan(0)
+    for (const entry of confirmed) {
+      expect(String(entry['txHash'])).toMatch(/^0x[0-9a-f]{64}$/)
+    }
+  })
+
+  it('shows a revoke that never reached a terminal state, not only the wins', () => {
+    // A recording of nothing but successes is the "successes more prominent
+    // than failures" problem in a new costume. This submit has no confirmation
+    // because the process was killed mid-revoke; the trail records what it saw.
+    const submits = entries.filter((e) => e['stage'] === 'revoke.submit').length
+    const terminal = entries.filter((e) =>
+      ['revoke.confirmed', 'revoke.failed', 'revoke.reverted', 'revoke.skipped'].includes(
+        String(e['stage']),
+      ),
+    ).length
+    expect(submits).toBeGreaterThan(terminal)
+  })
+
+  it('contains no test-fixture rows — every line is from a real run', () => {
+    // The durable trail interleaves genuine rows with placeholder ones written
+    // by the suite. Shipping one of those as evidence would be fabrication.
+    for (const entry of entries) {
+      const line = JSON.stringify(entry)
+      expect(line).not.toContain('0xtoken0000')
+      expect(line).not.toContain('0xspender000')
+      expect(line).not.toContain('0xowner0000')
+      expect(line).not.toContain('"txHash":"0xhash"')
+    }
   })
 })
 

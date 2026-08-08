@@ -19,15 +19,21 @@ import type { McpContext } from '../src/mcp.js'
  */
 
 const MAX = (1n << 256n) - 1n
+/** Permit2's unlimited: its amount field is 160 bits, not 256. */
+const MAX_160 = (1n << 160n) - 1n
 const TOKEN = '0x4facb5FD1682c4449cAD42b7590861f7eD5c88Cb' as Address
 const SPENDER = '0x8eBf8540EdE8e40CD94825C418758d4029D8892e' as Address
 const OWNER = '0x5E2e5Fd3aD7fDC9B94482930db8b5F45E439bab7' as Address
+const PERMIT2 = '0x000000000022D473030F116dDEE9F6B43aC78BA3' as Address
 const HEAD = 11_443_000n
+const NOW = 1_800_000_000
+const FAR_FUTURE = NOW + 365 * 86_400
 
 const chainMocks = vi.hoisted(() => ({
   fetchApprovals: vi.fn(),
   readAllowance: vi.fn(),
   readBalance: vi.fn(),
+  readChainTimeSeconds: vi.fn(),
   tokenSymbol: vi.fn(),
   hasCodeAt: vi.fn(),
   findDeploymentBlock: vi.fn(),
@@ -42,7 +48,20 @@ vi.mock('../src/chain.js', async (importOriginal) => {
   }
 })
 
-const revokeMock = vi.hoisted(() => ({ revokeApproval: vi.fn() }))
+/** Network edges only: the address, the ABI and permit2Status stay real. */
+const permit2Mocks = vi.hoisted(() => ({
+  fetchPermit2Pairs: vi.fn(),
+  readPermit2Allowance: vi.fn(),
+}))
+vi.mock('../src/permit2.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/permit2.js')>()),
+  ...permit2Mocks,
+}))
+
+const revokeMock = vi.hoisted(() => ({
+  revokeApproval: vi.fn(),
+  revokePermit2Allowances: vi.fn(),
+}))
 vi.mock('../src/revoke.js', () => revokeMock)
 
 const keeperhubMock = vi.hoisted(() => ({ constructed: vi.fn() }))
@@ -173,8 +192,24 @@ beforeEach(() => {
   chainMocks.readAllowance.mockResolvedValue(MAX)
   chainMocks.readBalance.mockResolvedValue(10_000_000_000n)
   chainMocks.tokenSymbol.mockResolvedValue('mUSDC')
+  chainMocks.readChainTimeSeconds.mockResolvedValue(NOW)
+  // No Permit2 exposure unless a test asks for one.
+  permit2Mocks.fetchPermit2Pairs.mockResolvedValue([])
+  permit2Mocks.readPermit2Allowance.mockResolvedValue({
+    amount: MAX_160,
+    expiration: FAR_FUTURE,
+    nonce: 3,
+  })
   // Aged contract by default, so young-spender stays quiet unless a test says so.
   chainMocks.hasCodeAt.mockResolvedValue(true)
+  revokeMock.revokePermit2Allowances.mockResolvedValue({
+    executed: true,
+    latencyMs: 640,
+    allowanceAfter: 0n,
+    pairs: [{ token: TOKEN, spender: SPENDER }],
+    cleared: [{ token: TOKEN, spender: SPENDER }],
+    transactionHash: '0xlockdown',
+  })
   revokeMock.revokeApproval.mockResolvedValue({
     executed: true,
     latencyMs: 812,
@@ -236,6 +271,7 @@ describe('list_exposures', () => {
       {
         token: TOKEN,
         spender: SPENDER,
+        standard: 'erc20',
         symbol: 'mUSDC',
         allowance: MAX.toString(),
         unlimited: true,
@@ -243,6 +279,24 @@ describe('list_exposures', () => {
         atRisk: '10000000000',
       },
     ])
+  })
+
+  it('flags the ERC-20 approval granted to Permit2 itself, and only that one', async () => {
+    // The upstream root: Permit2 can only move what the token approved it to
+    // move, so this single grant enables the entire downstream ledger. A caller
+    // that cannot tell it apart from any other spender would revoke it as if it
+    // were one.
+    chainMocks.fetchApprovals.mockResolvedValue([
+      { token: TOKEN, spender: PERMIT2 },
+      { token: TOKEN, spender: SPENDER },
+    ])
+
+    const exposures = await mcp.listExposures(makeCtx())
+
+    expect(exposures[0]).toMatchObject({ spender: PERMIT2, upstreamPermit2: true })
+    // Absent, not false: a `false` on every ordinary approval would bury the
+    // one entry that matters.
+    expect(exposures[1]).not.toHaveProperty('upstreamPermit2')
   })
 
   it('caps at-risk at the allowance when the allowance is smaller than the balance', async () => {
@@ -299,6 +353,86 @@ describe('list_exposures', () => {
     await mcp.listExposures(makeCtx())
 
     expect(revokeMock.revokeApproval).not.toHaveBeenCalled()
+    expect(revokeMock.revokePermit2Allowances).not.toHaveBeenCalled()
+  })
+
+  it('reports a Permit2 allowance the ERC-20 sweep cannot see at all', async () => {
+    // The gap this whole feature exists to close. A signature-based grant
+    // writes Permit2's ledger and emits nothing on the token, so the loop above
+    // returns an empty list for a wallet with a live, drainable allowance.
+    chainMocks.fetchApprovals.mockResolvedValue([])
+    permit2Mocks.fetchPermit2Pairs.mockResolvedValue([{ token: TOKEN, spender: SPENDER }])
+
+    const exposures = await mcp.listExposures(makeCtx())
+
+    expect(exposures).toEqual([
+      {
+        token: TOKEN,
+        spender: SPENDER,
+        standard: 'permit2',
+        symbol: 'mUSDC',
+        allowance: MAX_160.toString(),
+        // The sentinel follows the surface: uint160 max, not uint256 max.
+        unlimited: true,
+        atRisk: '10000000000',
+        expiresAt: FAR_FUTURE,
+        expired: false,
+        secondsRemaining: 365 * 86_400,
+      },
+    ])
+  })
+
+  it('lists an EXPIRED Permit2 grant, marked expired and at risk of nothing', async () => {
+    // Reported rather than filtered out: being able to see that Revoker knows
+    // the difference is the point, and a surface that silently dropped them
+    // would be indistinguishable from one that never looked.
+    chainMocks.fetchApprovals.mockResolvedValue([])
+    permit2Mocks.fetchPermit2Pairs.mockResolvedValue([{ token: TOKEN, spender: SPENDER }])
+    permit2Mocks.readPermit2Allowance.mockResolvedValue({
+      amount: MAX_160,
+      expiration: NOW - 60,
+      nonce: 3,
+    })
+
+    const [exposure] = await mcp.listExposures(makeCtx())
+
+    expect(exposure).toMatchObject({ expired: true, secondsRemaining: -60, atRisk: '0' })
+  })
+
+  it('caps a bounded Permit2 amount at the amount, not the balance', async () => {
+    chainMocks.fetchApprovals.mockResolvedValue([])
+    permit2Mocks.fetchPermit2Pairs.mockResolvedValue([{ token: TOKEN, spender: SPENDER }])
+    permit2Mocks.readPermit2Allowance.mockResolvedValue({
+      amount: 250_000_000n,
+      expiration: FAR_FUTURE,
+      nonce: 3,
+    })
+
+    const [exposure] = await mcp.listExposures(makeCtx())
+
+    expect(exposure).toMatchObject({ unlimited: false, atRisk: '250000000' })
+  })
+
+  it('omits a Permit2 slot whose amount is already zero', async () => {
+    // lockdown() zeroes `amount` and leaves the expiration behind, so amount is
+    // the only field that says the slot is spent.
+    chainMocks.fetchApprovals.mockResolvedValue([])
+    permit2Mocks.fetchPermit2Pairs.mockResolvedValue([{ token: TOKEN, spender: SPENDER }])
+    permit2Mocks.readPermit2Allowance.mockResolvedValue({
+      amount: 0n,
+      expiration: FAR_FUTURE,
+      nonce: 3,
+    })
+
+    expect(await mcp.listExposures(makeCtx())).toEqual([])
+  })
+
+  it('does not read chain time when Permit2 has nothing to report', async () => {
+    // One RPC call saved on the common path, and the reason the block read sits
+    // behind the emptiness check rather than in front of it.
+    await mcp.listExposures(makeCtx())
+
+    expect(chainMocks.readChainTimeSeconds).not.toHaveBeenCalled()
   })
 })
 
@@ -349,21 +483,105 @@ describe('explain_exposure — the evidence, not a summary of it', () => {
     // and none of them tripped" is a different statement from "no threat found".
     expect(explanation.all.map((v) => v.rule).sort()).toEqual([
       'denylisted',
+      'permit2-long-lived',
       'unlimited-to-unverified',
       'young-spender',
     ])
     expect(explanation.all.every((v) => typeof v.reason === 'string')).toBe(true)
   })
 
-  it('carries the rule catalogue so the reader does not need the source open', async () => {
+  it('carries the rule catalogue, holds included, so the reader needs no source open', async () => {
     const explanation = await mcp.explainExposure(makeCtx(), TOKEN, SPENDER)
 
     expect(explanation.catalogue.map((r) => r.id).sort()).toEqual([
       'denylisted',
+      'permit2-long-lived',
       'unlimited-to-unverified',
+      'upstream-permit2-approval',
       'young-spender',
     ])
     expect(explanation.catalogue.every((r) => r.description.length > 0)).toBe(true)
+  })
+
+  it('reports a HOLD and autonomousRevoke: false for the approval granted to Permit2', async () => {
+    // Nothing is hidden: the threat is still reported, and only the unattended
+    // ACTION is refused. A human reading this is being told both facts.
+    // An explorer blip reporting Permit2's source as unverified is exactly how
+    // the loop would talk itself into revoking the wallet's widest approval.
+    const kh = makeKh({ isSourceVerified: vi.fn().mockResolvedValue(false) })
+    const explanation = await mcp.explainExposure(
+      makeCtx({ kh: kh as unknown as KeeperHub }),
+      TOKEN,
+      PERMIT2,
+    )
+
+    expect(explanation.threat).toBe(true)
+    expect(explanation.holds.map((v) => v.rule)).toEqual(['upstream-permit2-approval'])
+    expect(explanation.autonomousRevoke).toBe(false)
+    expect(explanation.upstreamPermit2).toBe(true)
+  })
+
+  it('explains a Permit2 exposure against its expiration and the chain clock', async () => {
+    const kh = makeKh({ isSourceVerified: vi.fn().mockResolvedValue(false) })
+    const explanation = await mcp.explainExposure(
+      makeCtx({ kh: kh as unknown as KeeperHub }),
+      TOKEN,
+      SPENDER,
+      'permit2',
+    )
+
+    expect(explanation.standard).toBe('permit2')
+    expect(explanation.expiresAt).toBe(FAR_FUTURE)
+    expect(explanation.fired.map((v) => v.rule)).toContain('permit2-long-lived')
+    // Read from Permit2's ledger, not the token's allowance mapping.
+    expect(permit2Mocks.readPermit2Allowance).toHaveBeenCalledWith(OWNER, TOKEN, SPENDER)
+    expect(chainMocks.readAllowance).not.toHaveBeenCalled()
+  })
+
+  it('calls an EXPIRED Permit2 allowance what it is: not a threat', async () => {
+    permit2Mocks.readPermit2Allowance.mockResolvedValue({
+      amount: MAX_160,
+      expiration: NOW - 1,
+      nonce: 3,
+    })
+
+    const explanation = await mcp.explainExposure(makeCtx(), TOKEN, SPENDER, 'permit2')
+
+    expect(explanation.expired).toBe(true)
+    expect(explanation.fired.map((v) => v.rule)).not.toContain('permit2-long-lived')
+  })
+
+  it('ABSTAINS rather than reporting safety when the chain clock cannot be read', async () => {
+    // Fail closed. Without a block timestamp the lifetime is unmeasurable, and
+    // the derived expiry fields would be fiction — so neither is invented.
+    chainMocks.readChainTimeSeconds.mockRejectedValue(new Error('rpc down'))
+
+    const explanation = await mcp.explainExposure(makeCtx(), TOKEN, SPENDER, 'permit2')
+
+    const verdict = explanation.all.find((v) => v.rule === 'permit2-long-lived')
+    expect(verdict?.reason).toContain('INDETERMINATE')
+    expect(verdict?.evidence['indeterminate']).toBe(true)
+    expect(explanation.expiresAt).toBe(FAR_FUTURE)
+    expect(explanation).not.toHaveProperty('expired')
+    expect(explanation).not.toHaveProperty('secondsRemaining')
+    // What is still knowable stays knowable: the amount caps the exposure.
+    expect(explanation.atRisk).toBe('10000000000')
+  })
+
+  it('still caps at-risk at a bounded amount when the clock is unavailable', async () => {
+    // Losing the clock costs the expiry fields, not the arithmetic. Reporting
+    // the whole balance for a 250 USDC grant would overstate it either way.
+    chainMocks.readChainTimeSeconds.mockRejectedValue(new Error('rpc down'))
+    permit2Mocks.readPermit2Allowance.mockResolvedValue({
+      amount: 250_000_000n,
+      expiration: FAR_FUTURE,
+      nonce: 3,
+    })
+
+    const explanation = await mcp.explainExposure(makeCtx(), TOKEN, SPENDER, 'permit2')
+
+    expect(explanation.atRisk).toBe('250000000')
+    expect(explanation.unlimited).toBe(false)
   })
 
   it('answers for a pair that never appears in the approval logs', async () => {
@@ -441,6 +659,26 @@ describe('simulate_revoke — KeeperHub simulate() on a real path', () => {
     expect(checkAndExecute).not.toHaveBeenCalled()
     expect(writeContract).not.toHaveBeenCalled()
   })
+
+  it('dry-runs a Permit2 revoke as a one-element lockdown on the Permit2 contract', async () => {
+    // The same call the batched autonomous path sends, with a batch of one.
+    const kh = makeKh()
+
+    const report = await mcp.simulateRevoke(
+      makeCtx({ kh: kh as unknown as KeeperHub }),
+      TOKEN,
+      SPENDER,
+      'permit2',
+    )
+
+    expect(kh.simulate).toHaveBeenCalledWith({
+      contractAddress: PERMIT2,
+      functionName: 'lockdown',
+      functionArgs: [[{ token: TOKEN, spender: SPENDER }]],
+      abi: expect.arrayContaining([expect.objectContaining({ name: 'lockdown' })]),
+    })
+    expect(report.broadcast).toBe(false)
+  })
 })
 
 describe('revoke_approval — the confirmation gate', () => {
@@ -484,6 +722,37 @@ describe('revoke_approval — the confirmation gate', () => {
     // Prefixed so the audit trail records which surface asked, and keyed so a
     // retried tool call cannot double-execute.
     expect(call.idempotencyKey).toMatch(/^mcp-revoke-0x[0-9a-f]{40}:0x[0-9a-f]{40}-\d+$/)
+    expect(revokeMock.revokePermit2Allowances).not.toHaveBeenCalled()
+  })
+
+  it('routes a confirmed Permit2 revoke through lockdown with a batch of one', async () => {
+    const ctx = makeCtx()
+
+    const decision = await mcp.revokeExposure(ctx, TOKEN, SPENDER, true, 'permit2')
+
+    expect(decision.authorised).toBe(true)
+    expect(revokeMock.revokeApproval).not.toHaveBeenCalled()
+    const call = revokeMock.revokePermit2Allowances.mock.calls[0]?.[0] as {
+      owner: Address
+      pairs: unknown[]
+      idempotencyKey?: string
+    }
+    expect(call.owner).toBe(OWNER)
+    expect(call.pairs).toEqual([{ token: TOKEN, spender: SPENDER }])
+    expect(call.idempotencyKey).toMatch(/^mcp-revoke-/)
+  })
+
+  it('is the ONLY route to clearing the approval granted to Permit2 itself', async () => {
+    // The autonomous loop holds this one back permanently (rules.ts →
+    // upstreamPermit2Approval), so it can only ever be cleared by a human
+    // saying yes here — and it still refuses without that yes.
+    expect((await mcp.revokeExposure(makeCtx(), TOKEN, PERMIT2, undefined)).authorised).toBe(false)
+    expect(revokeMock.revokeApproval).not.toHaveBeenCalled()
+
+    const decision = await mcp.revokeExposure(makeCtx(), TOKEN, PERMIT2, true)
+
+    expect(decision.authorised).toBe(true)
+    expect(revokeMock.revokeApproval).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -533,6 +802,37 @@ describe('the MCP server itself, over an in-memory transport', () => {
     expect(JSON.parse(textOf(result))).toEqual([
       expect.objectContaining({ token: TOKEN, spender: SPENDER, unlimited: true }),
     ])
+
+    await server.close()
+  })
+
+  it('routes the `via` argument through to the Permit2 ledger', async () => {
+    // An LLM that cannot pick the ledger would read an empty slot and report
+    // "no exposure" about a live one, so the argument has to reach the handler.
+    const { client, server } = await connect()
+
+    const result = await client.callTool({
+      name: 'explain_exposure',
+      arguments: { token: TOKEN, spender: SPENDER, via: 'permit2' },
+    })
+    const explanation = JSON.parse(textOf(result)) as { standard: string }
+
+    expect(explanation.standard).toBe('permit2')
+    expect(permit2Mocks.readPermit2Allowance).toHaveBeenCalledWith(OWNER, TOKEN, SPENDER)
+
+    await server.close()
+  })
+
+  it('rejects a `via` the schema does not know, before any chain call', async () => {
+    const { client, server } = await connect()
+
+    const result = await client.callTool({
+      name: 'explain_exposure',
+      arguments: { token: TOKEN, spender: SPENDER, via: 'permit3' },
+    })
+
+    expect(result.isError).toBe(true)
+    expect(permit2Mocks.readPermit2Allowance).not.toHaveBeenCalled()
 
     await server.close()
   })

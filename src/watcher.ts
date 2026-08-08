@@ -1,9 +1,23 @@
 import type { Address } from 'viem'
 import { audit } from './audit.js'
-import { fetchApprovals, publicClient, readAllowance, readBalance, tokenSymbol } from './chain.js'
+import {
+  fetchApprovals,
+  publicClient,
+  readAllowance,
+  readBalance,
+  readChainTimeSeconds,
+  tokenSymbol,
+} from './chain.js'
 import { KeeperHub } from './keeperhub.js'
-import { assess } from './rules.js'
-import { revokeApproval, type RevokeOutcome } from './revoke.js'
+import {
+  fetchPermit2Pairs,
+  permit2PairKey,
+  permit2Status,
+  readPermit2Allowance,
+  type Permit2Pair,
+} from './permit2.js'
+import { assess, mayRevokeUnattended } from './rules.js'
+import { revokeApproval, revokePermit2Allowances, type RevokeOutcome } from './revoke.js'
 
 /**
  * The autonomous loop: watch → detect → revoke, unattended.
@@ -12,6 +26,19 @@ import { revokeApproval, type RevokeOutcome } from './revoke.js'
  * threat rules against current chain state, and — when a rule fires —
  * autonomously revokes. No human in the loop, because the entire premise is
  * that the human is asleep.
+ *
+ * Two surfaces, scanned every cycle, because approval risk lives on two:
+ *
+ *   ERC-20  — `Approval` logs on the watched tokens, revoked one
+ *             `approve(spender, 0)` at a time.
+ *   Permit2 — Permit2's own allowance ledger, discovered from Permit2's own
+ *             events, revoked as ONE batched `lockdown()`.
+ *
+ * They are kept structurally separate rather than merged into one exposure list
+ * because almost nothing about them is the same: different log source,
+ * different unlimited sentinel, different revoke primitive, and only one of
+ * them expires. A merged list would have needed a discriminant at every step
+ * and would have made the batching impossible.
  */
 
 export interface WatcherOptions {
@@ -78,6 +105,19 @@ export class Watcher {
    * demo, the benchmark, an unattended overnight watch — is covered.
    */
   private readonly tracked = new Map<string, ExposureKey>()
+
+  /**
+   * The same idea for Permit2 slots, and for a sharper reason.
+   *
+   * A Permit2 grant made by SIGNATURE produces exactly one `Permit` log, in the
+   * attacker's own transaction. There is no second event, no token-side
+   * `Approval`, and nothing that re-announces the grant later. Once that single
+   * log ages out of the sliding window it is the only trace there ever was, so
+   * a watcher that derives its exposure set from the window alone forgets the
+   * grant while it is still live and still drainable.
+   */
+  private readonly trackedPermit2 = new Map<string, Permit2Pair>()
+  private readonly handledPermit2 = new Set<string>()
   private readonly configuredTokens: Address[]
   private revokeCount = 0
   private stopped = false
@@ -209,6 +249,21 @@ export class Watcher {
           rules: assessment.fired.map((v) => ({ rule: v.rule, reason: v.reason, ...v.evidence })),
         })
 
+        // A hold means the finding is real and the hammer is too big to swing
+        // unattended — today, an ERC-20 approval granted to Permit2 itself,
+        // whose revocation would break every Permit2 integration for this token
+        // for a wallet whose owner never asked. Reported in full, with the
+        // reason, and left for a human. See rules.ts → upstreamPermit2Approval.
+        if (!mayRevokeUnattended(assessment)) {
+          audit('revoke.skipped', {
+            token: exposure.token,
+            spender: exposure.spender,
+            reason: 'autonomous revoke withheld by a hold',
+            holds: assessment.holds.map((v) => ({ rule: v.rule, reason: v.reason, ...v.evidence })),
+          })
+          continue
+        }
+
         if (this.dryRun) {
           audit('revoke.skipped', { token: exposure.token, spender: exposure.spender, reason: 'dry run' })
           continue
@@ -248,7 +303,191 @@ export class Watcher {
       }
     }
 
+    // A failure on one surface must not blind the other. The Permit2 scan makes
+    // its own RPC calls (three log queries plus a block read), and letting one
+    // of them throw out of scan() would mean an unreachable Permit2 index also
+    // stopped the ERC-20 sweep that had just finished successfully.
+    try {
+      performed.push(...(await this.scanPermit2(fromBlock, currentBlock)))
+    } catch (error) {
+      audit('watch.error', { surface: 'permit2', error: describeError(error) })
+    }
+
     return performed
+  }
+
+  /**
+   * The Permit2 half of a scan.
+   *
+   * Structurally the same shape as the ERC-20 loop above with one deliberate
+   * difference: threatening slots are COLLECTED, not revoked one at a time.
+   * `lockdown()` zeroes any number of them in a single transaction, so a wallet
+   * with six poisoned Permit2 grants pays one base fee here where the ERC-20
+   * path would pay six.
+   */
+  private async scanPermit2(fromBlock: bigint, currentBlock: bigint): Promise<RevokeOutcome[]> {
+    if (this.stopped) return []
+
+    const discovered = await fetchPermit2Pairs(this.owner, fromBlock, currentBlock)
+    for (const pair of discovered) {
+      this.trackedPermit2.set(permit2PairKey(pair), pair)
+    }
+
+    // Chain time, read once per scan. Every expiry decision below is made
+    // against the chain's clock rather than this host's — see
+    // readChainTimeSeconds for why a drifted local clock would fail open.
+    const chainTimeSeconds = await readChainTimeSeconds()
+
+    audit('watch.scan', {
+      surface: 'permit2',
+      block: currentBlock,
+      fromBlock,
+      permit2Events: discovered.length,
+      distinctExposures: this.trackedPermit2.size,
+      chainTimeSeconds,
+    })
+
+    const batch: Permit2Pair[] = []
+
+    for (const pair of this.trackedPermit2.values()) {
+      if (this.stopped) break
+
+      try {
+        const id = permit2PairKey(pair)
+        const allowance = await readPermit2Allowance(this.owner, pair.token, pair.spender)
+        const status = permit2Status(allowance, chainTimeSeconds)
+
+        if (status === 'empty') {
+          // Zero amount: a lockdown landed, or nothing was ever granted here.
+          // Dropping the dedupe entry is what lets a later re-permit of the
+          // same slot be treated as a fresh exposure rather than as one we
+          // already handled — the identical reasoning as the ERC-20 path.
+          this.handledPermit2.delete(id)
+          continue
+        }
+
+        if (status === 'expired') {
+          // Not a threat, and stated as a fact rather than a silence. Permit2
+          // reverts the transfer once chain time passes the expiration, so
+          // there is nothing to take and lockdown() would spend gas zeroing a
+          // number nobody can use.
+          this.handledPermit2.delete(id)
+          audit('threat.cleared', {
+            surface: 'permit2',
+            token: pair.token,
+            spender: pair.spender,
+            reason: 'Permit2 allowance expired — a transfer against it would revert',
+            amount: allowance.amount,
+            expiration: allowance.expiration,
+            chainTimeSeconds,
+          })
+          continue
+        }
+
+        if (this.handledPermit2.has(id)) continue
+
+        const balance = await readBalance(pair.token, this.owner)
+        const assessment = await assess({
+          token: pair.token,
+          spender: pair.spender,
+          owner: this.owner,
+          allowance: allowance.amount,
+          balance,
+          currentBlock,
+          kh: this.kh,
+          denylist: this.denylist,
+          permit2: {
+            expiration: allowance.expiration,
+            nonce: allowance.nonce,
+            chainTimeSeconds,
+          },
+        })
+
+        if (!assessment.threat) {
+          audit('threat.cleared', {
+            surface: 'permit2',
+            token: pair.token,
+            spender: pair.spender,
+            allowance: allowance.amount,
+            expiration: allowance.expiration,
+            checked: assessment.all.map((v) => v.rule),
+          })
+          continue
+        }
+
+        const symbol = await tokenSymbol(pair.token)
+        audit('threat.detected', {
+          surface: 'permit2',
+          token: pair.token,
+          symbol,
+          spender: pair.spender,
+          allowance: allowance.amount,
+          expiration: allowance.expiration,
+          atRisk: balance,
+          rules: assessment.fired.map((v) => ({ rule: v.rule, reason: v.reason, ...v.evidence })),
+        })
+
+        if (!mayRevokeUnattended(assessment)) {
+          audit('revoke.skipped', {
+            surface: 'permit2',
+            token: pair.token,
+            spender: pair.spender,
+            reason: 'autonomous revoke withheld by a hold',
+            holds: assessment.holds.map((v) => ({ rule: v.rule, reason: v.reason, ...v.evidence })),
+          })
+          continue
+        }
+
+        if (this.dryRun) {
+          audit('revoke.skipped', {
+            surface: 'permit2',
+            token: pair.token,
+            spender: pair.spender,
+            reason: 'dry run',
+          })
+          continue
+        }
+
+        batch.push(pair)
+      } catch (error) {
+        audit('watch.error', {
+          surface: 'permit2',
+          token: pair.token,
+          spender: pair.spender,
+          error: describeError(error),
+        })
+        continue
+      }
+    }
+
+    // The guard slot doubles as the emptiness check: no threatening slot means
+    // no transaction, and lockdown over an empty array would emit nothing while
+    // still paying for a transaction.
+    const guard = batch[0]
+    if (guard === undefined) return []
+
+    const detectedAt = Date.now()
+    const outcome = await revokePermit2Allowances({
+      kh: this.kh,
+      owner: this.owner,
+      pairs: batch,
+      detectedAt,
+      idempotencyKey: `permit2-lockdown-${permit2PairKey(guard)}-x${batch.length}-${detectedAt}`,
+    })
+
+    // Only slots the chain confirms are zero are marked handled, so a batch
+    // that landed partially is retried for exactly the remainder next scan.
+    for (const pair of outcome.cleared) {
+      this.handledPermit2.add(permit2PairKey(pair))
+    }
+    this.revokeCount += outcome.cleared.length
+    this.outcomes.push(outcome)
+
+    if (this.maxRevokes !== undefined && this.revokeCount >= this.maxRevokes) {
+      this.stop()
+    }
+
+    return [outcome]
   }
 
   /** Run until stopped, or until maxRevokes is reached. */

@@ -2,6 +2,12 @@ import type { Address } from 'viem'
 import { audit } from './audit.js'
 import { readAllowance } from './chain.js'
 import { explorerTxUrl, sleep, type ExecutionStatus, type KeeperHub } from './keeperhub.js'
+import {
+  PERMIT2_ABI_JSON,
+  PERMIT2_ADDRESS,
+  readPermit2Allowance,
+  type Permit2Pair,
+} from './permit2.js'
 
 /**
  * The revoke action.
@@ -156,6 +162,36 @@ interface Landing {
   disposition: RevokeDisposition
   status: ExecutionStatus
   escalations: number
+}
+
+/**
+ * ── The four endings, worded once ────────────────────────────────────────────
+ *
+ * Both revoke paths (ERC-20 `approve(spender, 0)` and Permit2 `lockdown`) have
+ * to classify the same four outcomes, and the wording of those verdicts is the
+ * audit trail. Two independently written copies would eventually disagree about
+ * what "confirmed" means, which is the one judgement in this module that must
+ * never be made twice.
+ */
+const PENDING_ERROR = 'still pending at poll timeout — not confirmed, not failed'
+
+function pendingReason(escalations: number): string {
+  return `execution had not reached a terminal state after ${LANDING_BUDGET_MS / 1_000}s and ${escalations} fee escalations — still pending, NOT confirmed failed; it may still land`
+}
+
+/** A mined-but-reverted execution: the only case where a revert reason exists. */
+function revertReason(status: ExecutionStatus): string {
+  return status.error ?? 'no revert reason reported'
+}
+
+/**
+ * Either the execution reported a hard failure, or it reported success and the
+ * allowance survived anyway. Both are failures; this says which.
+ */
+function failureReason(landing: Landing | undefined): string {
+  return landing?.disposition === 'failed'
+    ? `execution reported ${landing.status.status || 'a terminal failure'}: ${landing.status.error ?? 'no reason reported'}`
+    : 'execution reported success but allowance is still non-zero'
 }
 
 /**
@@ -329,7 +365,7 @@ export async function revokeApproval(input: {
     } else if (landing?.disposition === 'reverted') {
       // Mined, and it failed on chain. Distinct from never landing at all, and
       // the only case where a revert reason exists to report.
-      const reason = landing.status.error ?? 'no revert reason reported'
+      const reason = revertReason(landing.status)
       outcome.disposition = 'reverted'
       outcome.error = `revoke reverted on chain: ${reason}`
       audit('revoke.reverted', {
@@ -349,14 +385,14 @@ export async function revokeApproval(input: {
       // still land. The watcher leaves the exposure unhandled and retries next
       // scan, which is correct either way.
       outcome.disposition = 'pending'
-      outcome.error = 'still pending at poll timeout — not confirmed, not failed'
+      outcome.error = PENDING_ERROR
       audit('revoke.failed', {
         token,
         spender,
         txHash: hash,
         terminal: false,
         disposition: 'pending',
-        reason: `execution had not reached a terminal state after ${LANDING_BUDGET_MS / 1_000}s and ${ESCALATION_RUNGS.length} fee escalations — still pending, NOT confirmed failed; it may still land`,
+        reason: pendingReason(ESCALATION_RUNGS.length),
         escalations: landing.escalations,
         allowanceAfter: allowanceAfter.toString(),
         latencyMs,
@@ -364,10 +400,7 @@ export async function revokeApproval(input: {
     } else {
       // Either the execution reported a hard failure, or it reported success
       // and the allowance survived anyway. Both are failures; report which.
-      const reason =
-        landing?.disposition === 'failed'
-          ? `execution reported ${landing.status.status || 'a terminal failure'}: ${landing.status.error ?? 'no reason reported'}`
-          : 'execution reported success but allowance is still non-zero'
+      const reason = failureReason(landing)
       outcome.disposition = 'failed'
       outcome.error = 'allowance still non-zero after reported success'
       audit('revoke.failed', {
@@ -387,5 +420,256 @@ export async function revokeApproval(input: {
     const message = error instanceof Error ? error.message : String(error)
     audit('revoke.failed', { token, spender, terminal: true, error: message, latencyMs })
     return { executed: false, latencyMs, disposition: 'failed', error: message }
+  }
+}
+
+/**
+ * ── The Permit2 revoke: lockdown() through the same check-and-execute ────────
+ *
+ * `lockdown(TokenSpenderPair[])` zeroes the `amount` on any number of
+ * (token, spender) slots in ONE transaction. That is a real structural
+ * advantage over the ERC-20 path, which needs one `approve(spender, 0)`
+ * transaction per exposure and pays a base fee for each: a wallet with eight
+ * poisoned Permit2 grants is eight transactions and eight chances to be
+ * front-run on the ERC-20 model, and one transaction here.
+ *
+ * The guard is the part that matters, and it is deliberately identical in kind
+ * to the ERC-20 path — the TOCTOU-free property is the project's core claim and
+ * a second, looser write path would quietly retire it. The allowance read and
+ * the lockdown are one server-side operation: KeeperHub re-reads
+ * `allowance(owner, token, spender)` and only then submits, so there is no
+ * window between deciding and acting for a drainer watching the mempool.
+ *
+ * Two honest consequences of batching a single-slot guard:
+ *
+ *   1. The condition can only watch ONE slot. It watches the first pair in the
+ *      batch. If that slot is zeroed by someone else between our read and
+ *      KeeperHub's, the whole batch is skipped rather than partially applied —
+ *      no gas is spent and the watcher rebuilds the batch from live reads on
+ *      the next scan, so the remaining pairs are picked up seconds later. A
+ *      skipped batch is a delay, never a silent drop.
+ *   2. `lockdown` on an already-zero slot is a no-op write, not a revert. That
+ *      is what makes the escalation ladder above safe to reuse verbatim: a
+ *      resubmission that loses the race finds the guard slot at zero, the
+ *      condition fails, and nothing is submitted at all.
+ *
+ * ABI note, because this is the one assumption here that cannot be proved
+ * without a live key: Permit2's `allowance` getter returns a THREE-value tuple
+ * `(uint160 amount, uint48 expiration, uint48 nonce)`, and the condition is
+ * evaluated against the first of them. The full canonical signature is sent —
+ * truncating the outputs to make the shape simpler would be inventing a
+ * function that does not exist — and the value the server actually compared is
+ * echoed back in `condition.observedValue` and recorded on the outcome, so the
+ * audit trail proves after the fact which member was read.
+ */
+export interface Permit2RevokeOutcome extends RevokeOutcome {
+  /** Every slot the lockdown call was asked to zero. */
+  pairs: Permit2Pair[]
+  /**
+   * The slots the chain confirms are now zero. The watcher marks only these
+   * handled, so a partially-applied batch is retried for exactly the remainder.
+   */
+  cleared: Permit2Pair[]
+}
+
+export async function revokePermit2Allowances(input: {
+  kh: KeeperHub
+  owner: Address
+  pairs: readonly Permit2Pair[]
+  /** Deduplicates retries of the same logical batch within KeeperHub's 24h window. */
+  idempotencyKey?: string
+  detectedAt?: number
+}): Promise<Permit2RevokeOutcome> {
+  const { kh, owner } = input
+  const pairs = [...input.pairs]
+  const startedAt = input.detectedAt ?? Date.now()
+
+  // The guard slot. An empty batch has none, and submitting a lockdown over an
+  // empty array would spend gas emitting nothing at all.
+  const guard = pairs[0]
+  if (guard === undefined) {
+    const latencyMs = Date.now() - startedAt
+    audit('revoke.skipped', { method: 'permit2-lockdown', reason: 'empty batch', latencyMs })
+    return { executed: false, latencyMs, pairs: [], cleared: [] }
+  }
+
+  const submit = (gasLimitMultiplier: string, idempotencyKey?: string) =>
+    kh.checkAndExecute({
+      check: {
+        contractAddress: PERMIT2_ADDRESS,
+        functionName: 'allowance',
+        functionArgs: [owner, guard.token, guard.spender],
+        abi: PERMIT2_ABI_JSON,
+      },
+      condition: { operator: 'gt', value: '0' },
+      action: {
+        contractAddress: PERMIT2_ADDRESS,
+        functionName: 'lockdown',
+        // One argument: the TokenSpenderPair[]. Passed as objects rather than
+        // positional arrays because the ABI names both components, which is the
+        // form every encoder accepts for a named tuple.
+        functionArgs: [pairs.map((pair) => ({ token: pair.token, spender: pair.spender }))],
+        abi: PERMIT2_ABI_JSON,
+        gasLimitMultiplier,
+      },
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    })
+
+  audit('revoke.submit', {
+    owner,
+    method: 'check-and-execute',
+    action: 'permit2-lockdown',
+    pairs: pairs.length,
+    guard: `${guard.token}:${guard.spender}`,
+    gasLimitMultiplier: FIRST_GAS_LIMIT_MULTIPLIER,
+  })
+
+  try {
+    const result = await submit(FIRST_GAS_LIMIT_MULTIPLIER, input.idempotencyKey)
+
+    if (!result.executed) {
+      const latencyMs = Date.now() - startedAt
+      audit('revoke.skipped', {
+        method: 'permit2-lockdown',
+        pairs: pairs.length,
+        reason: 'guard slot already zero at execution time — batch rebuilt on the next scan',
+        observed: result.condition?.observedValue,
+        latencyMs,
+      })
+      return {
+        executed: false,
+        latencyMs,
+        pairs,
+        cleared: [],
+        ...(result.condition ? { observedAllowance: result.condition.observedValue } : {}),
+      }
+    }
+
+    let hash = result.transactionHash
+    let sponsored: boolean | undefined
+    let gasUsedWei: string | undefined
+    let gasPriceWei: string | undefined
+    let landing: Landing | undefined
+
+    if (result.executionId) {
+      landing = await awaitLanding(kh, result.executionId, async (rung, gasLimitMultiplier) => {
+        audit('revoke.submit', {
+          owner,
+          method: 'check-and-execute',
+          action: 'permit2-lockdown',
+          pairs: pairs.length,
+          escalation: rung,
+          gasLimitMultiplier,
+          reason: `no terminal state after ${ESCALATE_AFTER_MS / 1_000}s (~2 blocks) — resubmitting at the current base fee`,
+        })
+        const bumped = await submit(
+          gasLimitMultiplier,
+          input.idempotencyKey ? `${input.idempotencyKey}-esc${rung}` : undefined,
+        )
+        return bumped.executionId
+      })
+      hash = landing.status.transactionHash ?? hash
+      sponsored = landing.status.sponsored
+      gasUsedWei = landing.status.gasUsedWei
+      gasPriceWei = landing.status.gasPriceWei
+    }
+
+    // Confirm every slot against the chain rather than trusting the execution
+    // report — per slot, because a batch can land partially in principle and
+    // "the transaction succeeded" is not the same statement as "this allowance
+    // is gone".
+    const observed = await Promise.all(
+      pairs.map(async (pair) => ({
+        pair,
+        state: await readPermit2Allowance(owner, pair.token, pair.spender),
+      })),
+    )
+    const cleared = observed.filter((entry) => entry.state.amount === 0n).map((e) => e.pair)
+    const remaining = observed.reduce((sum, entry) => sum + entry.state.amount, 0n)
+    const latencyMs = Date.now() - startedAt
+
+    const outcome: Permit2RevokeOutcome = {
+      executed: true,
+      latencyMs,
+      allowanceAfter: remaining,
+      pairs,
+      cleared,
+      ...(hash ? { transactionHash: hash, explorerUrl: explorerTxUrl(hash) } : {}),
+      ...(result.condition ? { observedAllowance: result.condition.observedValue } : {}),
+      ...(sponsored !== undefined ? { sponsored } : {}),
+      ...(gasUsedWei ? { gasUsedWei } : {}),
+      ...(gasPriceWei ? { gasPriceWei } : {}),
+      ...(landing ? { escalations: landing.escalations } : {}),
+    }
+
+    const detail = {
+      owner,
+      action: 'permit2-lockdown',
+      txHash: hash,
+      pairs: pairs.length,
+      cleared: cleared.length,
+      latencyMs,
+    }
+
+    // The chain outranks the execution record, exactly as in revokeApproval:
+    // every slot at zero is a confirmed revoke whichever rung landed it.
+    if (remaining === 0n) {
+      outcome.disposition = 'confirmed'
+      audit('revoke.confirmed', {
+        ...detail,
+        explorerUrl: outcome.explorerUrl,
+        sponsored,
+        gasUsedWei,
+        gasPriceWei,
+        escalations: landing?.escalations,
+        allowanceAfter: '0',
+      })
+    } else if (landing?.disposition === 'reverted') {
+      const reason = revertReason(landing.status)
+      outcome.disposition = 'reverted'
+      outcome.error = `permit2 lockdown reverted on chain: ${reason}`
+      audit('revoke.reverted', {
+        ...detail,
+        reason,
+        gasUsedWei,
+        gasPriceWei,
+        escalations: landing.escalations,
+        allowanceAfter: remaining.toString(),
+      })
+    } else if (landing?.disposition === 'pending') {
+      outcome.disposition = 'pending'
+      outcome.error = PENDING_ERROR
+      audit('revoke.failed', {
+        ...detail,
+        terminal: false,
+        disposition: 'pending',
+        reason: pendingReason(ESCALATION_RUNGS.length),
+        escalations: landing.escalations,
+        allowanceAfter: remaining.toString(),
+      })
+    } else {
+      outcome.disposition = 'failed'
+      outcome.error = 'permit2 allowance still non-zero after reported success'
+      audit('revoke.failed', {
+        ...detail,
+        terminal: true,
+        reason: failureReason(landing),
+        allowanceAfter: remaining.toString(),
+      })
+    }
+
+    return outcome
+  } catch (error) {
+    const latencyMs = Date.now() - startedAt
+    const message = error instanceof Error ? error.message : String(error)
+    audit('revoke.failed', {
+      owner,
+      action: 'permit2-lockdown',
+      pairs: pairs.length,
+      terminal: true,
+      error: message,
+      latencyMs,
+    })
+    return { executed: false, latencyMs, pairs, cleared: [], disposition: 'failed', error: message }
   }
 }

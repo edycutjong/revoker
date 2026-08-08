@@ -24,16 +24,49 @@ const SPENDER = '0x8ebf8540ede8e40cd94825c418758d4029d8892e' as Address
 const OWNER = '0x5e2e5fd3ad7fdc9b94482930db8b5f45e439bab7' as Address
 /** A token that reverts on the ERC-20 view calls the scan depends on. */
 const HOSTILE = '0xdeadbeef00000000000000000000000000000001' as Address
+const PERMIT2 = '0x000000000022D473030F116dDEE9F6B43aC78BA3' as Address
+
+/** Chain time the Permit2 tests are anchored to, and a year past it. */
+const NOW = 1_800_000_000
+const FAR_FUTURE = NOW + 365 * 86_400
+/** Permit2's unlimited: the amount field is packed into 160 bits, not 256. */
+const MAX_UINT160 = (1n << 160n) - 1n
 
 const chain = vi.hoisted(() => ({
   fetchApprovals: vi.fn(),
   readAllowance: vi.fn(),
   readBalance: vi.fn(),
+  readChainTimeSeconds: vi.fn(),
   tokenSymbol: vi.fn(),
   publicClient: { getBlockNumber: vi.fn() },
 }))
-const revoke = vi.hoisted(() => ({ revokeApproval: vi.fn() }))
-const rules = vi.hoisted(() => ({ assess: vi.fn() }))
+const revoke = vi.hoisted(() => ({
+  revokeApproval: vi.fn(),
+  revokePermit2Allowances: vi.fn(),
+}))
+/**
+ * assess is stubbed — this suite is about the loop's judgement, not the rules
+ * (test/rules.test.ts covers those). mayRevokeUnattended is NOT stubbed away:
+ * it is the gate that decides whether a fired rule may be acted on unattended,
+ * so it runs its real logic over whatever assessment a test hands back.
+ */
+const rules = vi.hoisted(() => ({
+  assess: vi.fn(),
+  mayRevokeUnattended: vi.fn(
+    (assessment: { threat: boolean; holds: unknown[] }) =>
+      assessment.threat && assessment.holds.length === 0,
+  ),
+}))
+/**
+ * Only the two network edges are replaced. permit2Status and permit2PairKey run
+ * for real, so "an expired allowance is not revoked" is decided by the same
+ * comparison the production path uses rather than by a stub agreeing with the
+ * test.
+ */
+const permit2 = vi.hoisted(() => ({
+  fetchPermit2Pairs: vi.fn(),
+  readPermit2Allowance: vi.fn(),
+}))
 const keeperhub = vi.hoisted(() => ({
   KeeperHub: vi.fn(() => ({ getHeldTokens: vi.fn().mockResolvedValue([]) })),
 }))
@@ -42,6 +75,10 @@ vi.mock('../src/chain.js', () => chain)
 vi.mock('../src/revoke.js', () => revoke)
 vi.mock('../src/rules.js', () => rules)
 vi.mock('../src/keeperhub.js', () => keeperhub)
+vi.mock('../src/permit2.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/permit2.js')>()),
+  ...permit2,
+}))
 
 let dir: string
 
@@ -54,13 +91,27 @@ beforeEach(() => {
   chain.fetchApprovals.mockResolvedValue([{ token: TOKEN, spender: SPENDER }])
   chain.readAllowance.mockResolvedValue(MAX)
   chain.readBalance.mockResolvedValue(10_000_000_000n)
+  chain.readChainTimeSeconds.mockResolvedValue(NOW)
   chain.tokenSymbol.mockResolvedValue('mUSDC')
+  // No Permit2 exposure unless a test says so, so the ERC-20 suite below stays
+  // about the ERC-20 path.
+  permit2.fetchPermit2Pairs.mockResolvedValue([])
+  permit2.readPermit2Allowance.mockResolvedValue({
+    amount: MAX_UINT160,
+    expiration: FAR_FUTURE,
+    nonce: 3,
+  })
   rules.assess.mockResolvedValue({
     threat: true,
     fired: [{ rule: 'denylisted', reason: 'spender is deny-listed', evidence: {} }],
     all: [{ rule: 'denylisted', fired: true }],
+    holds: [],
   })
   revoke.revokeApproval.mockResolvedValue({ executed: true, allowanceAfter: 0n, txHash: '0xabc' })
+  revoke.revokePermit2Allowances.mockImplementation(
+    ({ pairs }: { pairs: Array<{ token: Address; spender: Address }> }) =>
+      Promise.resolve({ executed: true, allowanceAfter: 0n, pairs, cleared: pairs }),
+  )
 })
 
 afterEach(() => {
@@ -129,7 +180,7 @@ describe('Watcher — option defaults', () => {
   })
 
   it('polls every 5s when no interval is given', async () => {
-    rules.assess.mockResolvedValue({ threat: false, fired: [], all: [{ rule: 'denylisted', fired: false }] })
+    rules.assess.mockResolvedValue({ threat: false, fired: [], all: [{ rule: 'denylisted', fired: false }], holds: [] })
     vi.useFakeTimers()
     const { Watcher } = await import('../src/watcher.js')
     const w = new Watcher({ owner: OWNER })
@@ -170,7 +221,7 @@ describe('Watcher.scan — the revoke decision', () => {
   })
 
   it('does not revoke when no rule fires', async () => {
-    rules.assess.mockResolvedValue({ threat: false, fired: [], all: [{ rule: 'denylisted', fired: false }] })
+    rules.assess.mockResolvedValue({ threat: false, fired: [], all: [{ rule: 'denylisted', fired: false }], holds: [] })
     const w = await makeWatcher()
 
     expect(await w.scan()).toHaveLength(0)
@@ -287,6 +338,54 @@ describe('Watcher.scan — the revoke decision', () => {
   })
 })
 
+describe('Watcher.scan — a hold withholds the hammer without hiding the finding', () => {
+  /** The assessment the rules return for the ERC-20 approval granted to Permit2. */
+  function heldAssessment() {
+    rules.assess.mockResolvedValue({
+      threat: true,
+      fired: [{ rule: 'unlimited-to-unverified', reason: 'unlimited to unverified', evidence: {} }],
+      all: [{ rule: 'unlimited-to-unverified', fired: true }],
+      holds: [
+        {
+          rule: 'upstream-permit2-approval',
+          fired: true,
+          reason: 'spender is the canonical Permit2 contract',
+          evidence: { autonomousRevoke: false },
+        },
+      ],
+    })
+  }
+
+  it('does NOT revoke the ERC-20 approval granted to Permit2 itself', async () => {
+    // Revoking this one breaks every Permit2 integration for the token — every
+    // Uniswap swap, every router — for a wallet whose owner is asleep and did
+    // not ask. An agent that can do that quietly is not a security agent.
+    heldAssessment()
+    chain.fetchApprovals.mockResolvedValue([{ token: TOKEN, spender: PERMIT2 }])
+    const w = await makeWatcher()
+
+    expect(await w.scan()).toHaveLength(0)
+    expect(revoke.revokeApproval).not.toHaveBeenCalled()
+  })
+
+  it('still reports the threat, and says out loud why it was not acted on', async () => {
+    // Withheld is not the same as unseen. Suppressing the detection would leave
+    // the wallet's single widest approval invisible in the one record that
+    // exists to be trusted after the fact.
+    heldAssessment()
+    chain.fetchApprovals.mockResolvedValue([{ token: TOKEN, spender: PERMIT2 }])
+    const w = await makeWatcher()
+
+    await w.scan()
+
+    const entries = readEntries()
+    expect(entries.find((e) => e.stage === 'threat.detected')).toMatchObject({ spender: PERMIT2 })
+    const skipped = entries.find((e) => e.stage === 'revoke.skipped')
+    expect(skipped).toMatchObject({ reason: 'autonomous revoke withheld by a hold' })
+    expect(JSON.stringify(skipped?.['holds'])).toContain('upstream-permit2-approval')
+  })
+})
+
 describe('Watcher.scan — one poisoned watchlist entry', () => {
   it('keeps evaluating the rest of the set when a token reverts on allowance()', async () => {
     // A token whose allowance() reverts used to throw straight out of scan(),
@@ -396,6 +495,304 @@ describe('Watcher.scan — maxRevokes', () => {
   })
 })
 
+/**
+ * The Permit2 surface.
+ *
+ * The one that matters commercially: a Permit2 allowance granted by SIGNATURE
+ * writes Permit2's own ledger and emits nothing on the token, so every test
+ * here describes exposure the ERC-20 half of this same scan cannot see at all.
+ */
+describe('Watcher.scan — Permit2 exposures', () => {
+  const PAIR = { token: TOKEN, spender: SPENDER }
+  const PAIR_B = { token: TOKEN, spender: '0x2222222222222222222222222222222222222222' as Address }
+
+  /** No ERC-20 exposure, so only the Permit2 half of the scan can do anything. */
+  function permit2Only(pairs = [PAIR]) {
+    chain.fetchApprovals.mockResolvedValue([])
+    permit2.fetchPermit2Pairs.mockResolvedValue(pairs)
+  }
+
+  it('scans Permit2 over the same block window as the ERC-20 sweep', async () => {
+    permit2Only()
+    const w = await makeWatcher()
+
+    await w.scan()
+
+    expect(permit2.fetchPermit2Pairs).toHaveBeenCalledWith(OWNER, 11_438_000n, 11_443_000n)
+  })
+
+  it('revokes a live, long-lived Permit2 allowance through lockdown()', async () => {
+    permit2Only()
+    const w = await makeWatcher()
+
+    const performed = await w.scan()
+
+    expect(revoke.revokePermit2Allowances).toHaveBeenCalledTimes(1)
+    expect(performed).toHaveLength(1)
+    const call = revoke.revokePermit2Allowances.mock.calls[0]?.[0] as {
+      owner: Address
+      pairs: unknown[]
+      idempotencyKey?: string
+    }
+    expect(call.owner).toBe(OWNER)
+    expect(call.pairs).toEqual([PAIR])
+    expect(call.idempotencyKey).toMatch(/^permit2-lockdown-.+:.+-x1-\d+$/)
+  })
+
+  it('assesses the allowance with its expiration and the CHAIN clock', async () => {
+    permit2Only()
+    const w = await makeWatcher()
+
+    await w.scan()
+
+    expect(rules.assess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowance: MAX_UINT160,
+        permit2: { expiration: FAR_FUTURE, nonce: 3, chainTimeSeconds: NOW },
+      }),
+    )
+  })
+
+  it('does NOT revoke an EXPIRED allowance, and records the reason', async () => {
+    // The requirement, end to end: Permit2 reverts the transfer once chain time
+    // passes the expiration, so there is nothing to take. lockdown() here would
+    // burn gas zeroing a number nobody can use — and the rules are never even
+    // consulted, because expiry is settled by chain state alone.
+    permit2Only()
+    permit2.readPermit2Allowance.mockResolvedValue({
+      amount: MAX_UINT160,
+      expiration: NOW - 1,
+      nonce: 3,
+    })
+    const w = await makeWatcher()
+
+    expect(await w.scan()).toHaveLength(0)
+    expect(rules.assess).not.toHaveBeenCalled()
+    expect(revoke.revokePermit2Allowances).not.toHaveBeenCalled()
+    expect(readEntries().find((e) => e.stage === 'threat.cleared')).toMatchObject({
+      surface: 'permit2',
+      reason: 'Permit2 allowance expired — a transfer against it would revert',
+    })
+  })
+
+  it('revokes an allowance expiring at exactly this second, matching the contract', async () => {
+    // AllowanceTransfer reverts on `block.timestamp > expiration`, so equality
+    // is still live and still drainable. Rounding it off as expired would stop
+    // the watcher looking at a slot that can still move money.
+    permit2Only()
+    permit2.readPermit2Allowance.mockResolvedValue({
+      amount: MAX_UINT160,
+      expiration: NOW,
+      nonce: 3,
+    })
+    const w = await makeWatcher()
+
+    expect(await w.scan()).toHaveLength(1)
+  })
+
+  it('skips a slot whose amount is already zero, without assessing it', async () => {
+    permit2Only()
+    permit2.readPermit2Allowance.mockResolvedValue({ amount: 0n, expiration: FAR_FUTURE, nonce: 3 })
+    const w = await makeWatcher()
+
+    expect(await w.scan()).toHaveLength(0)
+    expect(rules.assess).not.toHaveBeenCalled()
+  })
+
+  it('batches every threatening slot into ONE lockdown call', async () => {
+    // The structural advantage over the ERC-20 path: two exposures, one
+    // transaction, one base fee. The ERC-20 loop would have sent two.
+    permit2Only([PAIR, PAIR_B])
+    const w = await makeWatcher()
+
+    await w.scan()
+
+    expect(revoke.revokePermit2Allowances).toHaveBeenCalledTimes(1)
+    expect(
+      (revoke.revokePermit2Allowances.mock.calls[0]?.[0] as { pairs: unknown[] }).pairs,
+    ).toEqual([PAIR, PAIR_B])
+  })
+
+  it('does not lock down the same slot twice while the allowance is unchanged', async () => {
+    permit2Only()
+    const w = await makeWatcher()
+
+    await w.scan()
+    await w.scan()
+
+    expect(revoke.revokePermit2Allowances).toHaveBeenCalledTimes(1)
+  })
+
+  it('LOCKS DOWN AGAIN when the same slot is re-permitted after a confirmed lockdown', async () => {
+    // A signature grant can be replayed the moment a new one is signed, and a
+    // slot the agent stops looking at is a slot it stops protecting.
+    permit2Only()
+    const w = await makeWatcher()
+    await w.scan()
+
+    permit2.readPermit2Allowance.mockResolvedValueOnce({
+      amount: 0n,
+      expiration: FAR_FUTURE,
+      nonce: 3,
+    })
+    await w.scan() // the chain confirms the lockdown
+    await w.scan() // ...and a new signature refills the slot
+
+    expect(revoke.revokePermit2Allowances).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries only the slots the chain did NOT confirm as cleared', async () => {
+    // A batch that lands is not a batch that worked. Marking every pair handled
+    // on the transaction's say-so would leave a surviving allowance live with
+    // the log claiming it was revoked.
+    permit2Only([PAIR, PAIR_B])
+    revoke.revokePermit2Allowances.mockResolvedValue({
+      executed: true,
+      allowanceAfter: 500n,
+      pairs: [PAIR, PAIR_B],
+      cleared: [PAIR],
+    })
+    const w = await makeWatcher()
+
+    await w.scan()
+    await w.scan()
+
+    expect(
+      (revoke.revokePermit2Allowances.mock.calls[1]?.[0] as { pairs: unknown[] }).pairs,
+    ).toEqual([PAIR_B])
+  })
+
+  it('keeps a slot under watch after its only log has aged out of the window', async () => {
+    // A signature grant produces exactly ONE Permit log, in the attacker's own
+    // transaction. There is no second event ever. Once it ages past the sliding
+    // window it is the only trace that existed, so deriving the exposure set
+    // from the window alone forgets a live, drainable allowance.
+    permit2Only()
+    const w = await makeWatcher({ dryRun: true })
+    await w.scan()
+
+    permit2.fetchPermit2Pairs.mockResolvedValue([])
+    await w.scan()
+
+    expect(rules.assess).toHaveBeenCalledTimes(2)
+  })
+
+  it('detects and reports but never executes in a dry run', async () => {
+    permit2Only()
+    const w = await makeWatcher({ dryRun: true })
+
+    expect(await w.scan()).toHaveLength(0)
+    expect(revoke.revokePermit2Allowances).not.toHaveBeenCalled()
+    expect(
+      readEntries().find((e) => e.stage === 'revoke.skipped' && e['surface'] === 'permit2'),
+    ).toMatchObject({ reason: 'dry run' })
+  })
+
+  it('does not lock down a slot no rule fired on', async () => {
+    permit2Only()
+    rules.assess.mockResolvedValue({
+      threat: false,
+      fired: [],
+      all: [{ rule: 'permit2-long-lived', fired: false }],
+      holds: [],
+    })
+    const w = await makeWatcher()
+
+    expect(await w.scan()).toHaveLength(0)
+    expect(revoke.revokePermit2Allowances).not.toHaveBeenCalled()
+    expect(readEntries().find((e) => e.stage === 'threat.cleared')).toMatchObject({
+      surface: 'permit2',
+    })
+  })
+
+  it('withholds a held Permit2 slot instead of locking it down', async () => {
+    permit2Only()
+    rules.assess.mockResolvedValue({
+      threat: true,
+      fired: [{ rule: 'permit2-long-lived', reason: 'long-lived', evidence: {} }],
+      all: [{ rule: 'permit2-long-lived', fired: true }],
+      holds: [{ rule: 'upstream-permit2-approval', fired: true, reason: 'held', evidence: {} }],
+    })
+    const w = await makeWatcher()
+
+    expect(await w.scan()).toHaveLength(0)
+    expect(revoke.revokePermit2Allowances).not.toHaveBeenCalled()
+    expect(
+      readEntries().find((e) => e.stage === 'revoke.skipped' && e['surface'] === 'permit2'),
+    ).toMatchObject({ reason: 'autonomous revoke withheld by a hold' })
+  })
+
+  it('survives one Permit2 slot that reverts, and still handles the rest', async () => {
+    // The same discipline the ERC-20 loop applies: one bad slot must not switch
+    // the agent off for every slot after it in insertion order.
+    permit2Only([PAIR, PAIR_B])
+    permit2.readPermit2Allowance
+      .mockRejectedValueOnce(new Error('permit2 read reverted'))
+      .mockResolvedValue({ amount: MAX_UINT160, expiration: FAR_FUTURE, nonce: 3 })
+    const w = await makeWatcher()
+
+    expect(await w.scan()).toHaveLength(1)
+    expect(
+      (revoke.revokePermit2Allowances.mock.calls[0]?.[0] as { pairs: unknown[] }).pairs,
+    ).toEqual([PAIR_B])
+    expect(
+      readEntries().find((e) => e.stage === 'watch.error' && e['surface'] === 'permit2'),
+    ).toMatchObject({ error: 'permit2 read reverted' })
+  })
+
+  it('a broken Permit2 index does not blind the ERC-20 sweep that already succeeded', async () => {
+    // Two surfaces, two failure domains. Letting the Permit2 log query throw
+    // out of scan() would discard a completed ERC-20 revoke alongside it.
+    permit2.fetchPermit2Pairs.mockRejectedValue('permit2 indexer 503')
+    const w = await makeWatcher()
+
+    expect(await w.scan()).toHaveLength(1)
+    expect(revoke.revokeApproval).toHaveBeenCalledTimes(1)
+    const failure = readEntries().find(
+      (e) => e.stage === 'watch.error' && e['surface'] === 'permit2',
+    )
+    expect(failure).toMatchObject({ error: 'permit2 indexer 503' })
+    expect(failure?.['token']).toBeUndefined()
+  })
+
+  it('touches no Permit2 slot once the ERC-20 half has hit the revoke cap', async () => {
+    // stop() lands mid-scan. The Permit2 half must honour it on entry, not
+    // discover it one lockdown later.
+    permit2.fetchPermit2Pairs.mockResolvedValue([PAIR])
+    const w = await makeWatcher({ maxRevokes: 1 })
+
+    await w.scan()
+
+    expect(revoke.revokeApproval).toHaveBeenCalledTimes(1)
+    expect(permit2.fetchPermit2Pairs).not.toHaveBeenCalled()
+  })
+
+  it('stops mid-batch when a Permit2 lockdown reaches the revoke cap', async () => {
+    permit2Only([PAIR, PAIR_B])
+    const w = await makeWatcher({ maxRevokes: 2 })
+
+    await w.scan()
+
+    // Both slots cleared in one call, which is the cap, so the loop stops.
+    expect(revoke.revokePermit2Allowances).toHaveBeenCalledTimes(1)
+    await w.scan()
+    expect(permit2.readPermit2Allowance).toHaveBeenCalledTimes(2)
+  })
+
+  it('stops collecting slots the moment stop() lands mid-sweep', async () => {
+    permit2Only([PAIR, PAIR_B])
+    const w = await makeWatcher()
+    permit2.readPermit2Allowance.mockImplementation(() => {
+      w.stop()
+      return Promise.resolve({ amount: 0n, expiration: FAR_FUTURE, nonce: 3 })
+    })
+
+    await w.scan()
+
+    expect(permit2.readPermit2Allowance).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('Watcher.run — surviving a bad day', () => {
   it('keeps watching after a scan throws', async () => {
     // A transient RPC failure must not kill an agent whose entire value is
@@ -435,7 +832,7 @@ describe('Watcher.run — surviving a bad day', () => {
   })
 
   it('stop() ends the loop', async () => {
-    rules.assess.mockResolvedValue({ threat: false, fired: [], all: [{ rule: 'denylisted', fired: false }] })
+    rules.assess.mockResolvedValue({ threat: false, fired: [], all: [{ rule: 'denylisted', fired: false }], holds: [] })
     const w = await makeWatcher({ pollIntervalMs: 1 })
     setTimeout(() => { w.stop() }, 20)
     await w.run()

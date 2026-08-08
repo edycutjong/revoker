@@ -12,6 +12,8 @@
     "spike": "tsx scripts/spike.ts",
     "seed": "tsx scripts/seed.ts",
     "watch": "tsx src/index.ts",
+    "demo": "REVOKER_DEMO=1 tsx src/index.ts --dry-run --once",
+    "demo:verify": "REVOKER_DEMO=1 tsx src/server.ts --replay",
     "bench": "tsx scripts/bench.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p e2e",

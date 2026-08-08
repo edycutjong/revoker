@@ -108,6 +108,20 @@ export async function readBalance(token: Address, owner: Address): Promise<bigin
   })
 }
 
+/**
+ * Timestamp of the latest block, in Unix seconds.
+ *
+ * Permit2 expirations are compared against `block.timestamp`, never against the
+ * agent's wall clock. A host whose clock has drifted forward would otherwise
+ * declare live allowances expired and stop watching them — a fail-OPEN error
+ * caused entirely by something outside the chain. The chain's own clock is the
+ * only one that decides whether a Permit2 transfer reverts.
+ */
+export async function readChainTimeSeconds(): Promise<number> {
+  const block = await publicClient.getBlock()
+  return Number(block.timestamp)
+}
+
 export async function tokenSymbol(token: Address): Promise<string> {
   try {
     return await publicClient.readContract({ address: token, abi: erc20Abi, functionName: 'symbol' })

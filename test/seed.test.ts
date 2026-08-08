@@ -27,6 +27,7 @@ const TX = {
   deploySpender: '0xd002',
   mint: '0xm001',
   approve: '0xa001',
+  cliApprove: '0xc001',
 } as const
 
 const MAX_UINT256 = (1n << 256n) - 1n
@@ -84,7 +85,31 @@ vi.mock('../src/config.js', () => ({
     deployerPrivateKey: `0x${'11'.repeat(32)}`,
     rpcUrl: 'http://rpc.invalid',
     walletAddress: addr.victim,
+    chainId: 11155111,
   },
+}))
+
+/**
+ * The `kh` CLI wrapper. Mocked at the module boundary rather than at
+ * child_process, so these tests can never reach a real binary — seed.ts arms a
+ * live approval, and a test that shelled out for real would spend gas.
+ *
+ * khVersion defaults to null ("kh not installed"), which selects the REST arm.
+ * That keeps every test that predates the CLI path asserting exactly what it
+ * always did; the tests that want the CLI arm opt in explicitly.
+ */
+const cli = vi.hoisted(() => ({
+  khVersion: vi.fn<() => string | null>(),
+  khArmApproval: vi.fn<(input: {
+    chainId: number
+    token: string
+    spender: string
+    amount: string
+  }) => { executionId: string; transactionHash?: string }>(),
+}))
+vi.mock('../scripts/kh-cli.js', () => ({
+  khVersion: cli.khVersion,
+  khArmApproval: cli.khArmApproval,
 }))
 
 const chain = vi.hoisted(() => ({
@@ -220,6 +245,9 @@ beforeEach(() => {
 
   kh.writeContract.mockResolvedValue({ executionId: 'exec-1' })
   kh.getExecutionStatus.mockResolvedValue({ transactionHash: TX.approve })
+
+  cli.khVersion.mockReturnValue(null) // default: kh absent, REST arm
+  cli.khArmApproval.mockReturnValue({ executionId: 'exec-cli-1', transactionHash: TX.cliApprove })
 
   originalArgv = process.argv
   process.argv = ['node', 'scripts/seed.ts']
@@ -381,6 +409,54 @@ describe('seed.ts — arming the approval', () => {
     expect(logged()).toContain(`approved MAX_UINT256 -> ${addr.spender}`)
     expect(logged()).toContain(TX.approve)
     expect(logged()).toContain('allowance MAX_UINT256 (unlimited)')
+    // The fallback says so, and says how to get the CLI it fell back from.
+    expect(cli.khArmApproval).not.toHaveBeenCalled()
+    expect(logged()).toContain('kh not found — arming over REST (brew install keeperhub/tap/kh)')
+  })
+
+  it('arms through the kh CLI when the binary is installed', async () => {
+    // The operator path: `kh execute contract-call` signs as the Turnkey
+    // account, so the REST client is not constructed at all.
+    cli.khVersion.mockReturnValue('kh version 0.14.0')
+    chain.readAllowance.mockResolvedValueOnce(0n)
+
+    await runSeed()
+
+    expect(cli.khArmApproval).toHaveBeenCalledWith({
+      chainId: 11155111,
+      token: addr.token,
+      spender: addr.spender,
+      amount: MAX_UINT256.toString(),
+    })
+    expect(kh.constructed).toHaveLength(0)
+    expect(kh.writeContract).not.toHaveBeenCalled()
+    expect(logged()).toContain('arming with kh version 0.14.0')
+    expect(logged()).toContain(TX.cliApprove)
+    expect(logged()).toContain(`approved MAX_UINT256 -> ${addr.spender}`)
+  })
+
+  it('does not consult the kh CLI when the approval is already armed', async () => {
+    // Idempotency covers the CLI too: nothing is executed, so nothing is asked.
+    await runSeed()
+
+    expect(cli.khVersion).not.toHaveBeenCalled()
+    expect(cli.khArmApproval).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a kh CLI failure as a seed failure', async () => {
+    // A broken CLI must not silently fall through to REST — that would hide a
+    // real auth or install problem behind a run that looks fine.
+    cli.khVersion.mockReturnValue('kh version 0.14.0')
+    cli.khArmApproval.mockImplementation(() => {
+      throw new Error('kh execute contract-call failed (exit 1): not authenticated')
+    })
+    chain.readAllowance.mockResolvedValueOnce(0n)
+
+    await runSeed()
+
+    expect(errored()).toContain('Seed failed: kh execute contract-call failed (exit 1): not authenticated')
+    expect(process.exitCode).toBe(1)
+    expect(kh.writeContract).not.toHaveBeenCalled()
   })
 
   it('does not re-approve when the unlimited approval is already live', async () => {

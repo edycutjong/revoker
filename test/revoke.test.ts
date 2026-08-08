@@ -7,9 +7,20 @@ vi.mock('../src/chain.js', async () => {
   return { ...actual, readAllowance: vi.fn() }
 })
 
+// Only the network edge is replaced. PERMIT2_ADDRESS and PERMIT2_ABI_JSON stay
+// real, so the assertions below compare the actual address and the actual ABI
+// this module puts on the wire — a wrong lockdown signature fails here.
+vi.mock('../src/permit2.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/permit2.js')>('../src/permit2.js')
+  return { ...actual, readPermit2Allowance: vi.fn() }
+})
+
 const { readAllowance } = await import('../src/chain.js')
-const { revokeApproval } = await import('../src/revoke.js')
-import type { RevokeOutcome } from '../src/revoke.js'
+const { readPermit2Allowance, PERMIT2_ADDRESS, PERMIT2_ABI_JSON } = await import(
+  '../src/permit2.js'
+)
+const { revokeApproval, revokePermit2Allowances } = await import('../src/revoke.js')
+import type { Permit2RevokeOutcome, RevokeOutcome } from '../src/revoke.js'
 import type { KeeperHub } from '../src/keeperhub.js'
 
 const TOKEN = '0xtoken000000000000000000000000000000000' as Address
@@ -631,5 +642,369 @@ describe('revokeApproval — terminal-state polling and fee escalation', () => {
     expect(confirmed['gasPriceWei']).toBe('1500000007')
     expect(confirmed['gasUsedWei']).toBe('46482')
     expect(confirmed['escalations']).toBe(0)
+  })
+})
+
+/**
+ * ── The Permit2 revoke ───────────────────────────────────────────────────────
+ *
+ * Same execution machinery, a different primitive: `lockdown(TokenSpenderPair[])`
+ * zeroes many slots in one transaction where `approve(spender, 0)` zeroes one.
+ *
+ * What these tests are actually pinning is that batching did not buy speed by
+ * spending the project's core claim: the allowance read and the write are still
+ * ONE server-side check-and-execute, so there is still no window between
+ * deciding and acting.
+ */
+describe('revokePermit2Allowances — lockdown() through check-and-execute', () => {
+  const CONDITION = { met: true, observedValue: '999', targetValue: '0', operator: 'gt' }
+  const PAIR_A = { token: TOKEN, spender: SPENDER }
+  const PAIR_B = {
+    token: '0xtokenB00000000000000000000000000000000' as Address,
+    spender: '0xspenderB000000000000000000000000000000' as Address,
+  }
+
+  let entries: AuditEntry[]
+  let unsubscribe: () => void
+
+  beforeEach(() => {
+    vi.mocked(readPermit2Allowance).mockReset()
+    entries = []
+    unsubscribe = onAudit((entry) => entries.push(entry))
+  })
+
+  afterEach(() => {
+    unsubscribe()
+  })
+
+  const stagesOf = (stage: string): AuditEntry[] => entries.filter((e) => e.stage === stage)
+
+  /** Every slot reads back at `amount`, which is what "did the lockdown land" means. */
+  function slotsAt(amount: bigint): void {
+    vi.mocked(readPermit2Allowance).mockResolvedValue({
+      amount,
+      expiration: 1_900_000_000,
+      nonce: 4,
+    })
+  }
+
+  function fakePermit2Kh(overrides: Partial<KeeperHub> = {}): KeeperHub {
+    return fakeKh({
+      checkAndExecute: vi.fn().mockResolvedValue({
+        executed: true,
+        executionId: 'e1',
+        condition: CONDITION,
+      }),
+      ...overrides,
+    })
+  }
+
+  it('guards the write with a server-side allowance read — the TOCTOU property, unchanged', async () => {
+    const checkAndExecute = vi
+      .fn()
+      .mockResolvedValue({ executed: true, executionId: 'e1', condition: CONDITION })
+    slotsAt(0n)
+
+    await revokePermit2Allowances({
+      kh: fakePermit2Kh({ checkAndExecute }),
+      owner: OWNER,
+      pairs: [PAIR_A, PAIR_B],
+    })
+
+    const arg = checkAndExecute.mock.calls[0]![0] as {
+      check: { contractAddress: string; functionName: string; functionArgs: unknown[]; abi: unknown }
+      condition: { operator: string; value: string }
+      action: { contractAddress: string; functionName: string; functionArgs: unknown[]; abi: unknown }
+    }
+
+    // The check reads Permit2's ledger, not the token's: allowance(user, token,
+    // spender) on the Permit2 contract. Reading the token's allowance mapping
+    // here would guard the wrong number entirely.
+    expect(arg.check.contractAddress).toBe(PERMIT2_ADDRESS)
+    expect(arg.check.functionName).toBe('allowance')
+    expect(arg.check.functionArgs).toEqual([OWNER, PAIR_A.token, PAIR_A.spender])
+    expect(arg.check.abi).toBe(PERMIT2_ABI_JSON)
+    expect(arg.condition).toEqual({ operator: 'gt', value: '0' })
+
+    // ONE lockdown call carrying BOTH pairs. This is the batching advantage the
+    // ERC-20 path cannot have: two exposures, one base fee, one transaction.
+    expect(checkAndExecute).toHaveBeenCalledTimes(1)
+    expect(arg.action.contractAddress).toBe(PERMIT2_ADDRESS)
+    expect(arg.action.functionName).toBe('lockdown')
+    expect(arg.action.functionArgs).toEqual([
+      [
+        { token: PAIR_A.token, spender: PAIR_A.spender },
+        { token: PAIR_B.token, spender: PAIR_B.spender },
+      ],
+    ])
+    expect(arg.action.abi).toBe(PERMIT2_ABI_JSON)
+  })
+
+  it('reports confirmed once every slot in the batch reads zero', async () => {
+    slotsAt(0n)
+
+    const outcome = await revokePermit2Allowances({
+      kh: fakePermit2Kh(),
+      owner: OWNER,
+      pairs: [PAIR_A, PAIR_B],
+    })
+
+    expect(outcome.executed).toBe(true)
+    expect(outcome.disposition).toBe('confirmed')
+    expect(outcome.allowanceAfter).toBe(0n)
+    expect(outcome.cleared).toEqual([PAIR_A, PAIR_B])
+    expect(outcome.transactionHash).toBe('0xhash')
+    expect(outcome.explorerUrl).toContain('0xhash')
+    expect(stagesOf('revoke.confirmed').at(-1)).toMatchObject({ pairs: 2, cleared: 2 })
+  })
+
+  it('confirms each slot against the CHAIN, not against "the transaction succeeded"', async () => {
+    // A batch that lands is not the same statement as a batch that worked. Only
+    // the slots the chain reports as zero are marked cleared, so the watcher
+    // retries exactly the remainder rather than the whole batch or none of it.
+    vi.mocked(readPermit2Allowance)
+      .mockResolvedValueOnce({ amount: 0n, expiration: 1_900_000_000, nonce: 4 })
+      .mockResolvedValue({ amount: 500n, expiration: 1_900_000_000, nonce: 4 })
+
+    const outcome = await revokePermit2Allowances({
+      kh: fakePermit2Kh(),
+      owner: OWNER,
+      pairs: [PAIR_A, PAIR_B],
+    })
+
+    expect(outcome.cleared).toEqual([PAIR_A])
+    expect(outcome.allowanceAfter).toBe(500n)
+    expect(outcome.disposition).toBe('failed')
+    expect(outcome.error).toMatch(/still non-zero/)
+    expect(stagesOf('revoke.failed').at(-1)!['reason']).toMatch(/still non-zero/)
+  })
+
+  it('submits nothing at all for an empty batch', async () => {
+    // lockdown over an empty array emits nothing and still pays for a
+    // transaction, so an empty batch must never reach KeeperHub.
+    const checkAndExecute = vi.fn()
+
+    const outcome = await revokePermit2Allowances({
+      kh: fakeKh({ checkAndExecute }),
+      owner: OWNER,
+      pairs: [],
+    })
+
+    expect(checkAndExecute).not.toHaveBeenCalled()
+    expect(outcome.executed).toBe(false)
+    expect(outcome.pairs).toEqual([])
+    expect(outcome.cleared).toEqual([])
+    expect(stagesOf('revoke.skipped').at(-1)!['reason']).toBe('empty batch')
+  })
+
+  it('spends no gas when the guard slot is already zero at execution time', async () => {
+    // Someone else got there first. The batch is skipped whole rather than
+    // partially applied, and the watcher rebuilds it from live reads next scan —
+    // a delay, never a silent drop.
+    const kh = fakeKh({
+      checkAndExecute: vi.fn().mockResolvedValue({
+        executed: false,
+        condition: { met: false, observedValue: '0', targetValue: '0', operator: 'gt' },
+      }),
+    })
+
+    const outcome = await revokePermit2Allowances({ kh, owner: OWNER, pairs: [PAIR_A, PAIR_B] })
+
+    expect(outcome.executed).toBe(false)
+    expect(outcome.observedAllowance).toBe('0')
+    expect(outcome.cleared).toEqual([])
+    // No confirmation read is warranted when nothing was executed.
+    expect(readPermit2Allowance).not.toHaveBeenCalled()
+    expect(stagesOf('revoke.skipped').at(-1)!['reason']).toMatch(/guard slot already zero/)
+  })
+
+  it('omits observedAllowance from a skip that carried no condition', async () => {
+    const kh = fakeKh({ checkAndExecute: vi.fn().mockResolvedValue({ executed: false }) })
+
+    const outcome = await revokePermit2Allowances({ kh, owner: OWNER, pairs: [PAIR_A] })
+
+    expect(outcome).not.toHaveProperty('observedAllowance')
+  })
+
+  it('returns a failed outcome instead of throwing when KeeperHub errors', async () => {
+    // The watcher loop must survive a failed batch and retry on the next scan.
+    const kh = fakeKh({ checkAndExecute: vi.fn().mockRejectedValue(new Error('gateway timeout')) })
+
+    const outcome = await revokePermit2Allowances({ kh, owner: OWNER, pairs: [PAIR_A] })
+
+    expect(outcome.executed).toBe(false)
+    expect(outcome.disposition).toBe('failed')
+    expect(outcome.error).toBe('gateway timeout')
+    expect(stagesOf('revoke.failed').at(-1)).toMatchObject({ action: 'permit2-lockdown', pairs: 1 })
+  })
+
+  it('records a non-Error rejection instead of writing "undefined" to the trail', async () => {
+    // Rejections off a fetch stack are not always Errors. A bare string would
+    // otherwise erase the only record of why the batch never went out.
+    const kh = fakeKh({ checkAndExecute: vi.fn().mockRejectedValue('gateway exploded') })
+
+    const outcome = await revokePermit2Allowances({ kh, owner: OWNER, pairs: [PAIR_A] })
+
+    expect(outcome.error).toBe('gateway exploded')
+    expect(stagesOf('revoke.failed').at(-1)!['error']).toBe('gateway exploded')
+  })
+
+  it('skips the status poll and keeps the inline hash when no executionId comes back', async () => {
+    const getExecutionStatus = vi.fn()
+    const kh = fakeKh({
+      checkAndExecute: vi.fn().mockResolvedValue({
+        executed: true,
+        transactionHash: '0xinline',
+        condition: CONDITION,
+      }),
+      getExecutionStatus,
+    })
+    slotsAt(0n)
+
+    const outcome = await revokePermit2Allowances({ kh, owner: OWNER, pairs: [PAIR_A] })
+
+    expect(getExecutionStatus).not.toHaveBeenCalled()
+    expect(outcome.transactionHash).toBe('0xinline')
+    expect(outcome).not.toHaveProperty('sponsored')
+    expect(outcome).not.toHaveProperty('gasUsedWei')
+    expect(outcome).not.toHaveProperty('escalations')
+  })
+
+  it('reports a confirmed lockdown with no hash and no condition at all', async () => {
+    const kh = fakeKh({
+      checkAndExecute: vi.fn().mockResolvedValue({ executed: true, executionId: 'e1' }),
+      getExecutionStatus: vi
+        .fn()
+        .mockResolvedValue({ executionId: 'e1', status: 'completed', gasUsedWei: '', gasPriceWei: '' }),
+    })
+    slotsAt(0n)
+
+    const outcome = await revokePermit2Allowances({ kh, owner: OWNER, pairs: [PAIR_A] })
+
+    expect(outcome.disposition).toBe('confirmed')
+    expect(outcome).not.toHaveProperty('transactionHash')
+    expect(outcome).not.toHaveProperty('observedAllowance')
+    // Empty strings are "no gas data", not values worth reporting.
+    expect(outcome).not.toHaveProperty('gasUsedWei')
+    expect(outcome).not.toHaveProperty('gasPriceWei')
+  })
+})
+
+describe('revokePermit2Allowances — the escalation ladder, reused verbatim', () => {
+  const CONDITION = { met: true, observedValue: '999', targetValue: '0', operator: 'gt' }
+  const PAIR_A = { token: TOKEN, spender: SPENDER }
+
+  let entries: AuditEntry[]
+  let unsubscribe: () => void
+
+  beforeEach(() => {
+    vi.mocked(readPermit2Allowance).mockResolvedValue({
+      amount: 500n,
+      expiration: 1_900_000_000,
+      nonce: 4,
+    })
+    entries = []
+    unsubscribe = onAudit((entry) => entries.push(entry))
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    unsubscribe()
+  })
+
+  const stagesOf = (stage: string): AuditEntry[] => entries.filter((e) => e.stage === stage)
+
+  async function drive(promise: Promise<Permit2RevokeOutcome>): Promise<Permit2RevokeOutcome> {
+    await vi.advanceTimersByTimeAsync(120_000)
+    return promise
+  }
+
+  it('climbs the same rungs under NEW idempotency keys when nothing lands', async () => {
+    // Racing our own lockdown is free for exactly the reason it is free on the
+    // ERC-20 path: the losing submission finds the guard slot at zero, the
+    // server-side condition fails, and it writes nothing.
+    const checkAndExecute = vi
+      .fn()
+      .mockResolvedValueOnce({ executed: true, executionId: 'e1', condition: CONDITION })
+      .mockResolvedValueOnce({ executed: true, executionId: 'e2', condition: CONDITION })
+      .mockResolvedValueOnce({ executed: true, executionId: 'e3', condition: CONDITION })
+    const getExecutionStatus = vi.fn().mockResolvedValue({ executionId: 'x', status: 'pending' })
+
+    const outcome = await drive(
+      revokePermit2Allowances({
+        kh: fakeKh({ checkAndExecute, getExecutionStatus }),
+        owner: OWNER,
+        pairs: [PAIR_A],
+        idempotencyKey: 'permit2-abc',
+      }),
+    )
+
+    const submissions = checkAndExecute.mock.calls.map(
+      (c) => c[0] as { action: { gasLimitMultiplier?: string }; idempotencyKey?: string },
+    )
+    expect(submissions.map((s) => s.action.gasLimitMultiplier)).toEqual(['1.2', '1.5', '2.0'])
+    expect(submissions.map((s) => s.idempotencyKey)).toEqual([
+      'permit2-abc',
+      'permit2-abc-esc1',
+      'permit2-abc-esc2',
+    ])
+
+    // Still pending is NOT failed: the transaction may yet land, and the watcher
+    // leaves the slots unhandled and retries.
+    expect(outcome.disposition).toBe('pending')
+    expect(outcome.escalations).toBe(2)
+    expect(stagesOf('revoke.failed').at(-1)).toMatchObject({
+      terminal: false,
+      disposition: 'pending',
+    })
+  })
+
+  it('escalates without an idempotency key when the caller gave none', async () => {
+    const checkAndExecute = vi
+      .fn()
+      .mockResolvedValue({ executed: true, executionId: 'e1', condition: CONDITION })
+    const getExecutionStatus = vi.fn().mockResolvedValue({ executionId: 'e1', status: 'pending' })
+
+    await drive(
+      revokePermit2Allowances({
+        kh: fakeKh({ checkAndExecute, getExecutionStatus }),
+        owner: OWNER,
+        pairs: [PAIR_A],
+      }),
+    )
+
+    expect(checkAndExecute.mock.calls.every((c) => (c[0] as { idempotencyKey?: string }).idempotencyKey === undefined)).toBe(true)
+  })
+
+  it('reports a MINED-but-reverted lockdown as reverted, quoting the reason', async () => {
+    const kh = fakeKh({
+      checkAndExecute: vi
+        .fn()
+        .mockResolvedValue({ executed: true, executionId: 'e1', condition: CONDITION }),
+      getExecutionStatus: vi.fn().mockResolvedValue({
+        executionId: 'e1',
+        status: 'completed',
+        transactionHash: '0xreverted',
+        error: 'Error(ExcessiveInvalidation())',
+        sponsored: true,
+        gasUsedWei: '52000',
+        gasPriceWei: '1500000007',
+        receipts: [{ hash: '0xreverted', blockNumber: 9, receiptStatus: '0x0', gasUsed: '52000' }],
+      }),
+    })
+
+    const outcome = await drive(
+      revokePermit2Allowances({ kh, owner: OWNER, pairs: [PAIR_A] }),
+    )
+
+    expect(outcome.disposition).toBe('reverted')
+    expect(outcome.error).toMatch(/ExcessiveInvalidation/)
+    expect(outcome.sponsored).toBe(true)
+    expect(outcome.gasPriceWei).toBe('1500000007')
+    // Landed on chain and cost gas — which is not what "failed" (never landed)
+    // tells an operator.
+    expect(stagesOf('revoke.reverted')).toHaveLength(1)
+    expect(stagesOf('revoke.failed')).toHaveLength(0)
   })
 })
