@@ -29,6 +29,10 @@ jobs:
         with:
           config-file: .release-please-config.json
           manifest-file: .release-please-manifest.json
+          # Falls back to GITHUB_TOKEN when the PAT is absent, so a missing or
+          # expired secret degrades to the manual `gh workflow run release.yml`
+          # path rather than failing the job outright.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
       # Fully automatic releases: queue the release PR to merge itself once its
       # checks pass. Auto-merge respects branch protection and required checks,
@@ -37,7 +41,13 @@ jobs:
       - name: Auto-merge the release PR
         if: ${{ steps.release.outputs.prs_created == 'true' || steps.release.outputs.pr }}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # THIS is the token that matters. A push made with GITHUB_TOKEN raises
+          # no workflow event — GitHub's recursion guard — so merging the release
+          # PR with it left the version bumped on main and the tag never cut,
+          # which reads exactly like "the PR didn't merge". A PAT looks like a
+          # human push, so the merge retriggers this workflow and release-please
+          # cuts the tag on that second run.
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           # This job never checks out, so `gh` has no git remote to infer from
           # and fails with "not a git repository". Pass --repo explicitly rather
