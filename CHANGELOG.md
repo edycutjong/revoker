@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.7.1](https://github.com/edycutjong/revoker/compare/v1.7.0...v1.7.1) (2026-08-08)
+
+
+### Fixes
+
+* **security:** constrain where the deploy script may send its secrets ([a65cf7f](https://github.com/edycutjong/revoker/commit/a65cf7f9fbcda8bc4404ef6b5a659f96e18b2fde))
+
+
+### Documentation
+
+* correct p95/p50 ratio, 1.92x -&gt; 1.87x ([be21230](https://github.com/edycutjong/revoker/commit/be21230e3f2085e29e37c472580a61a06677d598))
+
 ## [1.7.0](https://github.com/edycutjong/revoker/compare/v1.6.0...v1.7.0) (2026-08-08)
 
 
