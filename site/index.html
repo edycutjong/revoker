@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Revoker — lands the revoke before the drainer moves</title>
+<title>Revoker — autonomous approval hygiene for keeper wallets</title>
 <meta name="description" content="Revoker autonomously executes approve(spender, 0) through KeeperHub the instant a threat fires — no human in the loop. Proof: a real Sepolia drain, stopped." />
 <meta property="og:type" content="website" />
-<meta property="og:title" content="Revoker — lands the revoke before the drainer moves" />
+<meta property="og:title" content="Revoker — autonomous approval hygiene for keeper wallets" />
 <meta property="og:description" content="The drain fired after the revoke. It succeeded, and took zero. 13.47s median, 25/25 cycles, every step a real Sepolia tx." />
 <meta property="og:url" content="https://revoker.edycu.dev/" />
   <meta property="og:image" content="https://revoker.edycu.dev/assets/og-image.png" />
@@ -15,7 +15,7 @@
   <meta property="og:image:alt" content="Revoker — an approval turns dangerous, the revoke lands through KeeperHub, and the drainer takes nothing" />
   <meta property="og:site_name" content="Revoker" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Revoker — lands the revoke before the drainer moves" />
+  <meta name="twitter:title" content="Revoker — autonomous approval hygiene for keeper wallets" />
   <meta name="twitter:description" content="We let the drain contract fire after the revoke. It succeeded, and it took zero." />
   <meta name="twitter:image" content="https://revoker.edycu.dev/assets/og-image.png" />
   <meta name="twitter:image:alt" content="Revoker — an approval turns dangerous, the revoke lands through KeeperHub, and the drainer takes nothing" />
@@ -607,7 +607,7 @@ td.hot{color:var(--text); font-weight:700}
   <section class="hero" id="top" aria-labelledby="hero-h">
     <div class="container">
       <p class="eyebrow">Autonomous on-chain security agent · built on KeeperHub</p>
-      <h1 id="hero-h">The agent that lands the revoke before the drainer moves.</h1>
+      <h1 id="hero-h">The agent that takes the approval away before it can be used.</h1>
       <p class="sub">Token approvals are the most common wallet-drain vector, and every tool built
         for them is read-only: it tells you an approval is risky, and stops there.
         <span class="turn">Revoker acts.</span> The moment a threat rule fires it executes
@@ -650,7 +650,7 @@ td.hot{color:var(--text); font-weight:700}
           <span class="tnum" aria-hidden="true">1</span>
           <div class="tcard">
             <span class="ttag danger">The trap</span>
-            <h3>Victim grants unlimited approval</h3>
+            <h3>Keeper wallet grants unlimited approval</h3>
             <p>The everyday act that arms every drain: <code>approve(spender, MAX_UINT256)</code>
               to a spender contract. Allowance jumps to 1.157e77 — effectively infinite.</p>
             <div class="tmeta">
@@ -694,7 +694,7 @@ td.hot{color:var(--text); font-weight:700}
         <p class="k-line">Step 3 is the whole story. Revoker doesn't intercept the attack —
           it makes the attack <b>find an empty room</b>.</p>
         <p class="k-big">took 0</p>
-        <p class="k-sub">victim's balance unchanged: <b>10,000 mUSDC</b> across the whole sequence</p>
+        <p class="k-sub">watched wallet's balance unchanged: <b>10,000 mUSDC</b> across the whole sequence</p>
       </div>
 
       <p class="relay-note"><b>Reading the explorer links:</b> KeeperHub
@@ -735,7 +735,7 @@ td.hot{color:var(--text); font-weight:700}
           <a class="addr-v" href="https://sepolia.etherscan.io/address/0x8eBf8540EdE8e40CD94825C418758d4029D8892e" rel="noopener">0x8eBf8540EdE8e40CD94825C418758d4029D8892e</a>
         </div>
         <div class="addr-row">
-          <span class="addr-k">Watched wallet (victim)</span>
+          <span class="addr-k">Watched wallet (keeper)</span>
           <a class="addr-v" href="https://sepolia.etherscan.io/address/0x5E2e5Fd3aD7fDC9B94482930db8b5F45E439bab7" rel="noopener">0x5E2e5Fd3aD7fDC9B94482930db8b5F45E439bab7</a>
         </div>
       </div>
@@ -802,7 +802,7 @@ td.hot{color:var(--text); font-weight:700}
     <div class="container">
       <div class="sec-head">
         <p class="eyebrow">Detection</p>
-        <h2 id="rules-h">Three rules. No model.</h2>
+        <h2 id="rules-h">Four rules, one hold. No model.</h2>
         <p class="lede">Concrete, auditable threat conditions. Every firing carries its evidence
           into the audit trail, so a revoke can be justified after the fact.</p>
       </div>

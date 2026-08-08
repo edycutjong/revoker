@@ -91,9 +91,17 @@ KeeperHub signs exclusively for your organisation's Turnkey account. So the
 watched wallet and the revoke sender are necessarily **the same account** — the
 wallet being protected has to be one the agent's signer already controls.
 
-No retail victim's MetaMask is. Anything pitched as "we protect your wallet from
-drainers" runs straight into that wall, and every automated-revoker pitch that
-ignores it is describing software it cannot ship.
+No retail victim's MetaMask is. There is one other way out — **delegation**: an
+ERC-4337/7579 smart account granting a scoped ERC-7715 permission, which is how
+Revoke.cash Ultimate and Revoke.delegate reach wallets they do not custody. That
+path is real and it works. It requires a smart account and a human completing a
+permission-grant flow in a wallet UI.
+
+So the constraint is not a law of the problem — it is KeeperHub's Turnkey-only
+signing, and it points at a different set of wallets. A Turnkey- or
+Fireblocks-custodied keeper EOA has no smart account and no human to click
+anything, so the delegation funnel cannot reach it. **Their path reaches wallets
+ours cannot. Ours reaches wallets theirs cannot.**
 
 **So point it at the wallets where the constraint is satisfied by definition.**
 
