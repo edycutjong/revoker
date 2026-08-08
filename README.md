@@ -51,8 +51,14 @@ pnpm install
 pnpm demo:verify     # opens the real /verify dashboard at localhost:3000/verify
 ```
 
+`make demo-verify` is the same thing if you prefer Make; `make help` lists every
+target. If port 3000 is busy the server **refuses to start** rather than quietly
+moving — the instruction above would otherwise be wrong, and the likeliest thing
+already holding the port is another Revoker, which would mean two watchers racing
+to revoke the same allowance. Set `PORT` to move it: `PORT=3001 pnpm demo:verify`.
+
 That is not a screenshot or a mock UI. It is the **actual dashboard the agent
-serves**, replaying **68 verbatim rows** of a recorded Sepolia run from
+serves**, replaying **80 verbatim rows** of a recorded Sepolia run from
 [`data/demo-run.jsonl`](./data/demo-run.jsonl) — every `threat.detected`,
 `revoke.submit` and `revoke.confirmed` in the order and cadence they really
 happened, with clickable Etherscan links to the transactions that actually
@@ -63,8 +69,8 @@ run.
 pnpm demo            # one REAL scan of the public demo wallet against Sepolia
 ```
 
-`pnpm demo` reads live chain state through a public RPC and evaluates the real
-threat rules. It executes nothing.
+`pnpm demo` (or `make demo`) reads live chain state through a public RPC and
+evaluates the real threat rules. It executes nothing.
 
 > **Demo mode cannot execute, by construction.** `REVOKER_DEMO=1` substitutes a
 > sentinel API key that no KeeperHub organisation will accept, substitutes the
@@ -241,9 +247,18 @@ cast call 0x4facb5FD1682c4449cAD42b7590861f7eD5c88Cb \
 # 0
 ```
 
-The condition was evaluated against the live chain, not a cached value —
-KeeperHub reported `observedValue: 115792089237316195423570985008687907853269984665640564039457584007913129639935`
-at execution time.
+The condition was evaluated against the live chain, not a cached value. That is
+the mechanism, and it is the load-bearing part: `check-and-execute` re-reads the
+allowance server-side and scores the condition against whatever the chain holds
+at signing time, returning its observation as `condition.observedValue`.
+
+An earlier version of this README quoted a specific `observedValue` here — the
+full `MAX_UINT256` — as KeeperHub's observation on this run. Nothing in this repo
+backs that particular number, so it is gone. `revoke.confirmed` does not emit an
+`observed` field at all; only `revoke.skipped` does, on the path where the
+condition found the slot already zero. The published trail therefore carries no
+`observed*` key and never could have. On a document whose whole subject is honest
+accounting, a decorative digit is the worse of the two errors.
 
 ### The KeeperHub side of those same transactions — `executionId`
 
@@ -390,21 +405,29 @@ Contract addresses: [`deployments.json`](./deployments.json).
 
 ```mermaid
 flowchart TD
-    A["ERC-20 Approval logs<br/>Permit2 Approval / Permit / Lockdown logs"] --> B[watcher]
-    B --> C{"4 threat rules<br/>+ 1 hold"}
+    A["ERC-20 Approval logs<br/>Permit2 Approval / Permit / Lockdown logs"] --> B["watcher — COLLECT<br/>read, assess, audit, sign nothing"]
+    B --> C{"4 threat rules<br/>+ 2 holds"}
     C -->|none fire| D["threat.cleared — keep watching"]
-    C -->|hold fires| K["reported, NOT acted on<br/>offered to a human via MCP"]
-    C -->|any rule fires| E["KeeperHub<br/>POST /api/execute/check-and-execute"]
+    C -->|a hold fires| K["RAIL 1 — reported, NOT acted on<br/>offered to a human via MCP"]
+    C -->|any rule fires| Q{"RAIL 2 — correlated-failure brake<br/>≥4 newly firing AND ≥50% of evaluated?"}
+    Q -->|tripped| S["nothing signed this scan;<br/>the next scan confirms and acts"]
+    Q -->|open| R{"RAIL 3 — rolling 24h ceiling<br/>12 autonomous revokes"}
+    R -->|exhausted| T["signature refused,<br/>the watch continues"]
+    R -->|room| E["KeeperHub<br/>POST /api/execute/check-and-execute"]
     E --> F["re-read allowance<br/>+ approve(spender,0) or lockdown()<br/><b>ONE atomic operation</b>"]
-    F --> G["poll to a TERMINAL state<br/>gas ladder 0s / 24s / 48s"]
+    F --> G["poll to a TERMINAL state<br/>ladder +0s / +30s / +60s from the submit response"]
     G -->|allowance == 0| H["revoke.confirmed"]
     G -->|receipt reverted| I["revoke.reverted"]
-    G -->|no terminal state by 75s| P["revoke.failed — pending, retried next scan"]
-    H --> J[("audit trail — JSONL")]
+    G -->|no terminal state by +75s| P["revoke.pending — retried next scan"]
+    P -.->|3 attempts, 15s then 30s backoff| AB["revoke.abandoned"]
+    H --> J[("audit trail — JSONL<br/>+ SSE + GET /healthz")]
     I --> J
     P --> J
+    AB --> J
     D --> J
     K --> J
+    S --> J
+    T --> J
 
     classDef threat fill:#2a1416,stroke:#ff5c5c,color:#ffb3b3
     classDef act fill:#1a1f2e,stroke:#4ea1ff,color:#cfe4ff
@@ -429,7 +452,7 @@ does not. Full reasoning, failure modes and the Permit2 guard-helper detour:
 | Runtime | TypeScript strict, Node 22 | `noUncheckedIndexedAccess`, `verbatimModuleSyntax` |
 | Dashboard | Node `http` + SSE, zero-dependency HTML | No CDN, no build step; backfills from the durable JSONL on connect |
 | Query surface | MCP over stdio | `src/mcp.ts` — read-only by default, writes gated behind `confirm: true` |
-| Tests | Vitest + Foundry + Playwright | 580 TypeScript + 54 Solidity + 34 E2E = **668**, 100% coverage on `src/`, `scripts/` and the contracts |
+| Tests | Vitest + Foundry + Playwright | 720 TypeScript + 54 Solidity + 34 E2E = **808**, 100% coverage on `src/`, `scripts/` and the contracts |
 
 ### Threat rules
 
@@ -450,17 +473,63 @@ Permit2 allowance is explicitly *not* a threat — Permit2 reverts the transfer,
 so `lockdown()` would burn gas zeroing a number nobody can use. That verdict is
 reported as a checkable fact, not left as a silence.
 
-### The hold channel — one thing Revoker deliberately will not do
+Each rule has **three** possible answers, not two. `verified` / `unverified` /
+`unknown` — and `unknown` is never convertible into a firing verdict. Four sites
+abstain through one shared constructor and return `INDETERMINATE` with the
+remedy attached: both rules that consult source verification, `young-spender` on
+a non-archive RPC, and `permit2-long-lived` without chain time. This is not
+pedantry. One ABI endpoint serves every spender, so collapsing `unknown` into
+"unverified" made a single explorer outage fire `unlimited-to-unverified` on
+**every** unlimited approval in the wallet at once — an unattended agent tearing
+out every router it depends on because a website was down.
+
+### The hold channel — the things Revoker deliberately will not do unattended
 
 | Hold | What it is | Why it is never unattended |
 |---|---|---|
 | `upstream-permit2-approval` | an ERC-20 approval granted **to Permit2 itself** | `approve(PERMIT2, 0)` breaks every DEX route for that token |
+| `operator-allowlisted` | a spender the operator blessed in [`data/allowlist.json`](./data/allowlist.json) (or `REVOKER_ALLOWLIST`) | `young-spender` fires on any week-old contract and `unlimited-to-unverified` on any un-indexed router — which is what a *new venue integration* looks like from the outside |
 
 A hold is a **channel, not a rule**: same evidence discipline, different list,
 so it can neither create a threat nor mask one. The single autonomous gate is
 `mayRevokeUnattended()` — a threat carrying a hold is reported and left alone,
 then offered to a human through the MCP surface where `confirm: true` is a
 person saying yes.
+
+The allow-list does **not** suppress detection. The rules still run, the exposure
+is still reported, the evidence is still on the record; it withholds exactly one
+thing, the unattended signature. It rides the same hold channel rather than
+filtering earlier in the pipeline because a suppressed exposure and an absent
+exposure look identical in a log, and the difference between them is the entire
+safety argument.
+
+### Two rails a hold cannot express
+
+A hold refuses one exposure. Two failure shapes are not per-exposure at all, so
+[`src/watcher.ts`](./src/watcher.ts) carries two more rails and `scan()` was
+restructured into **collect → gate → execute** to make room for them. The loop
+used to revoke inline, mid-iteration, which made the brake below impossible to
+write: by the time the scan knew how many exposures had fired, it had already
+revoked the first of them.
+
+**The correlated-failure brake.** ≥4 newly-firing exposures that are *also* ≥50%
+of everything the rules evaluated this scan → sign nothing, say so loudly, and
+let the next scan decide. For N unrelated grants to become genuinely hostile
+between two five-second polls, an attacker must compromise N independent
+counterparties simultaneously; for the same N to light up because one shared
+input started answering *wrongly* rather than not at all, one thing has to go
+wrong. It is a one-scan delay, not a refusal — those exposures are no longer
+"newly" firing next time, so a genuine mass compromise is acted on five seconds
+later.
+
+**A rolling 24h ceiling of 12 autonomous revokes** (`REVOKER_MAX_REVOKES_PER_DAY`),
+metering *submitted* revokes rather than successful ones. Rolling rather than
+per-calendar-day because a daily reset is a cliff an attacker can straddle. It is
+deliberately **not** `maxRevokes` — that one is terminal, it calls `stop()`, and
+**an agent that stops watching is not safer, it is absent.** The ceiling refuses
+signatures while detection, reporting, the audit trail and the human MCP path all
+carry on. On the Permit2 side it *trims* the batch rather than refusing it, since
+a `lockdown()` of six slots is one transaction but six revokes.
 
 Downstream `lockdown()` is a scalpel: it zeroes exactly the slots that fired and
 nothing else notices. Upstream `approve(PERMIT2, 0)` is an amputation: it
@@ -533,8 +602,8 @@ naming the direction we did *not* explore either: `POST /revoke` could serve a
 
 Counted mechanically from the source, not estimated:
 
-- **11 distinct KeeperHub REST endpoints**, across **22 call sites**
-- **9 of those call sites are in `src/`** — the shipping agent
+- **11 distinct KeeperHub REST endpoints**, across **21 call sites**
+- **8 of those call sites are in `src/`** — the shipping agent
 - **4 request/response-level controls**: `simulate: true`, `Idempotency-Key`,
   `gasLimitMultiplier`, and pacing on the `X-Poll-Interval-Hint` response header
 - plus the **`kh` CLI** (`version`, `auth status`, `wallet balance`, `read`,
@@ -547,7 +616,7 @@ Every endpoint inside the agent is load-bearing:
 |---|---|---|
 | `POST /api/execute/check-and-execute` | `src/revoke.ts` ×2 | the atomicity claim dies for both the ERC-20 revoke and the Permit2 `lockdown()` |
 | `GET /api/execute/{id}/status` | `src/revoke.ts` | no terminal-state polling, no gas ladder, no tx hash — the benchmark has nothing to report |
-| `GET /api/chains/{id}/abi` | `src/rules.ts` ×2 | rules 1 and 4 both lose their source-verification signal and cannot fire |
+| `GET /api/chains/{id}/abi` | `src/rules.ts` ×1, shared by rules 1 and 4 | both lose their source-verification signal and abstain — `INDETERMINATE`, never "unverified" |
 | `GET /api/user/wallet/balances` | `src/watcher.ts`, `src/mcp.ts` | token discovery falls back to the static watchlist |
 | `POST /api/execute/contract-call` (`simulate: true`) | `src/mcp.ts` ×2 | `simulate_revoke` cannot dry-run, so the MCP surface loses its safe-preview tool |
 
@@ -562,6 +631,12 @@ owes nothing to the org.
 The ABI endpoint is worth calling out: it does not merely fetch ABIs here, it
 **powers two threat rules**. Unverified source is not proof of malice, but it
 means nobody can read what the code does.
+
+That single shared dependency is also why `sourceVerification()` returns three
+states rather than a boolean. One endpoint serves every spender, so an outage is
+never a fact about one contract — collapsing "we could not ask" into "unverified"
+turned a third-party HTTP failure into a wallet-wide firing. `verificationOrAbstain()`
+gives the caller no type-level way to convert `unknown` into a verdict.
 
 ---
 
@@ -670,30 +745,82 @@ Full per-cycle transaction links: [BENCHMARK.md](./BENCHMARK.md).
 
 ### Landing the transaction, not just submitting it
 
-`check-and-execute` exposes **no fee override** — only `gasLimitMultiplier` —
-so we do not get to name a tip. **The resubmission *is* the bump:** each attempt
-is re-priced against the current base fee, under a **fresh idempotency key** so
+`check-and-execute` exposes **no fee override** — only `gasLimitMultiplier` — so
+we do not get to name a tip. Each attempt is re-priced by KeeperHub's oracle
+against the base fee current at that moment, under a **fresh idempotency key** so
 the retry cannot be deduplicated into the original.
 
 ```
 rung 0   t=0s     first submission,  gasLimitMultiplier 1.2
-rung 1   t=24s    resubmit,          gasLimitMultiplier 1.5      (24s ≈ measured p95)
-rung 2   t=48s    resubmit,          gasLimitMultiplier 2.0
-give up  t=75s    report "pending" — explicitly NOT "failed"
+rung 1   t=+30s   resubmit,          gasLimitMultiplier 1.5     (> the 26.55s measured max)
+rung 2   t=+60s   resubmit,          gasLimitMultiplier 2.0
+give up  t=+75s   report "pending" — explicitly NOT "failed"
 ```
 
+**Two things this block deliberately no longer claims.**
+
+*It is not claimed to be a same-nonce fee bump.* "The resubmission **is** the
+bump" only holds if KeeperHub replaces the stranded transaction at the same
+nonce; if a resubmission gets a fresh nonce, rung 1 queues *behind* rung 0 and
+bumps nothing. KeeperHub does not document which it does, so we do not assert it.
+[ARCHITECTURE.md](./ARCHITECTURE.md) sets out exactly what the ladder buys with
+no nonce assumption at all.
+
+*Those offsets are on a different clock from the latency figures above.* The
+ladder's `t` starts when the **submit call returns**, not at detection —
+`awaitLanding()` is only reached after the POST resolves. The p50/p95 in the
+table above measure **detection → confirmed**, so the submit round trip sits
+inside that span and the rungs land later in wall-clock-from-detection terms than
+a bare `t=+30s` suggests. Both numbers are real; saying which clock each uses is
+what makes them consistent.
+
+The rung was 24s and sat *below* both the measured p95 (25.17s) and the max
+(26.55s), so more than 5% of perfectly healthy executions tripped it and paid for
+a rung they never needed. It is now **30s**, above the observed maximum rather
+than on the p95.
+
 The agent polls to a **terminal state** and distinguishes four dispositions:
-`confirmed`, `reverted`, `failed`, `pending`. A merely-pending execution used to
-be reported as failed; it is not the same thing, and a sentinel that cries
-failure at a transaction still on its way teaches its operator to ignore it.
+`confirmed`, `reverted`, `failed`, `pending` — each with its own audit stage. A
+merely-pending execution used to be reported as failed; it is not the same thing,
+and a sentinel that cries failure at a transaction still on its way teaches its
+operator to ignore it.
+
+### Bounded retries, and giving up as an event
+
+"Retried rather than silently dropped" used to mean *retried forever*. A token
+whose `approve()` accepts the call and silently ignores it produced one new
+gas-spending transaction every poll interval, indefinitely — and every individual
+attempt looked like a healthy first attempt, so nothing in the trail ever said
+the agent was stuck.
+
+Both surfaces now share one attempt ledger: **3 consecutive non-successes**,
+spaced by a 15s-then-30s backoff several poll intervals wide, then
+`revoke.abandoned` emitted **once** with the attempt count and the last error.
+The budget is released only on a **positive fact about the chain** — an observed
+zero, an empty or expired Permit2 slot, or a genuinely new grant (a high-water
+`Approval` block for ERC-20; a strictly greater `(nonce, expiration)` for
+Permit2). A revoke that was never submitted, because the condition found the
+allowance already zero, is not charged as an attempt: it cost no gas.
+
+### `GET /healthz` — a stopped watcher looks exactly like a running one
+
+The page still renders and `/api/stream` still opens when the loop has died, and
+`/api/meta` is static configuration that says nothing about whether a scan has
+happened in the last hour. `/healthz` answers **503** unless this process
+constructed a watcher *and* a `watch.scan` has landed within **3× the poll
+interval** — 503 rather than a 200 carrying `ok: false`, because container
+probes, uptime monitors and `curl -f` read the status line and never the body.
+Its counters ride the same audit subscriber the dashboard uses, so it can never
+disagree with the `/verify` tiles.
 
 ### Four reliability bugs, closed
 
 Every one was a **silent** failure — the agent looked healthy while not doing
-its job. Two new audit stages, `watch.error` and `revoke.reverted`, exist
-because of them. The `/verify` dashboard now backfills from the durable JSONL on
-connect rather than starting blank, and has a **failures tile**: a sentinel
-whose failures are quieter than its wins is not a sentinel.
+its job. Four audit stages exist because of them — `watch.error`,
+`revoke.reverted`, `revoke.pending` and `revoke.abandoned`. The `/verify`
+dashboard now backfills from the durable JSONL on connect rather than starting
+blank, and has a **failures tile**: a sentinel whose failures are quieter than
+its wins is not a sentinel.
 
 <details>
 <summary>The four, with symptom and fix</summary>
@@ -713,28 +840,35 @@ whose failures are quieter than its wins is not a sentinel.
 
 | Layer | Count | What it pins |
 |---|---|---|
-| Threat rules | 32 | True-positives, and that a verified/aged/non-deny-listed spender raises **no** threat |
+| Threat rules | 45 | True-positives; a verified/aged/non-deny-listed spender raises **no** threat; `unknown` verification abstains and never fires; both holds |
 | Permit2 | 31 | `uint160` unlimited ≠ `uint256` unlimited; an **expired** allowance is not revoked; `expiration == now` is |
-| KeeperHub client | 34 | 4xx is **not** retried; `isSourceVerified` fails **closed** |
-| Revoke path | 46 | Pending is **not** reported as failed; the escalation ladder; reverts are distinguished from never landing |
-| Watcher | 47 | A re-granted approval **is** caught again; one hostile token cannot blind the scan |
-| Dashboard, SSE, `POST /revoke` | 84 | The callback fails **closed** with 503 when unconfigured; the replay is not a highlight reel |
+| KeeperHub client | 43 | 4xx is **not** retried; `sourceVerification` returns `unknown` rather than `unverified` when the lookup fails |
+| Revoke path | 59 | Pending is **not** reported as failed; the escalation ladder; reverts are distinguished from never landing; `executionId` on every stage |
+| Watcher | 82 | A re-granted approval **is** caught again; one hostile token cannot blind the scan; the brake, the ceiling and the bounded retry |
+| Dashboard, SSE, `POST /revoke`, `/healthz` | 101 | The callback fails **closed** with 503 when unconfigured; `/healthz` is 503 on a stale scan; the replay is not a highlight reel |
 | MCP surface | 49 | `revoke_approval` refuses without explicit `confirm: true` |
-| Config + demo mode | 39 | Demo mode cannot execute, whatever flags are passed |
+| Config + demo mode | 53 | Demo mode cannot execute, whatever flags are passed; the allow-list loader |
 | Chain reads | 27 | A malformed log is dropped, never turned into a fabricated exposure |
+| Audit trail | 12 | The envelope's `stage` always wins over a detail key of the same name |
+| Watchlist / deny-list loaders | 10 | A malformed hand-edited file degrades to an empty list, never a throw |
 | CLI entrypoint | 13 | Flag parsing, and that `--dry-run` survives every path |
 | `kh` CLI wrapper | 16 | "not installed" is distinguished from "ran and said no" |
+| Repo invariants (CI + Makefile) | 28 | The gate really needs every job; `make` targets and pnpm scripts cannot drift apart |
 | Operator scripts | 151 | seed, seed:permit2, deploy:view, workflow deploy, bench, spike — all idempotent |
-| **TypeScript total** | **580** | **100% statements / branches / functions / lines** on `src/` **and** `scripts/`, gated in [`vitest.config.ts`](./vitest.config.ts) |
+| **TypeScript total** | **720** | **100% statements / branches / functions / lines** on `src/` **and** `scripts/`, gated in [`vitest.config.ts`](./vitest.config.ts) |
 | Solidity | 54 | **100% coverage.** The drain **succeeds and takes zero** post-revoke; 6 fuzz suites |
 | Playwright E2E | 34 | The published site's headline figures must match `BENCHMARK.md`, or CI fails |
-| **Total** | **668** | |
+| **Total** | **808** | |
 
-CI runs five jobs behind a gate: quality (lint, types, coverage), security
+CI runs six jobs behind a gate: quality (lint, types, coverage), security
 (`pnpm audit`, gitleaks over full history, a credential grep that fails the
 build), contracts (`forge build --sizes`, `forge test`, `forge snapshot --check`,
-Slither, a 100% Solidity coverage gate), E2E (Playwright) and perf (Lighthouse
-budgets).
+Slither, a 100% Solidity coverage gate), E2E (Playwright), perf (Lighthouse
+budgets) and submission readiness (placeholders, required links, tracked images).
+That last one runs on a **bare checkout and depends on no other job**: a
+judge-facing README still carrying an unfilled placeholder badge is worth knowing
+about even on a run where the tests are red. Run it locally with
+`make submission-check`.
 
 The on-chain proof is deliberately **not** in CI: it needs a funded wallet and an
 org API key, and running it per-PR would spend real gas and put credentials in
@@ -842,10 +976,13 @@ make arm
 
 The last step is deliberately an **independent** read (`kh read` is `eth_call`
 and needs no auth), so it is free to disagree with the seed's own report.
-`scripts/kh-cli.ts` uses `kh execute contract-call` followed by
-`kh execute status` — two commands rather than one `--wait`, mirroring the REST
-path exactly — and **falls back to the REST client when `kh` is not installed**,
-so the CLI is a real path and never a hard dependency.
+[`scripts/kh-cli.ts`](./scripts/kh-cli.ts) uses `kh execute contract-call`
+followed by `kh execute status` — two commands rather than one `--wait`,
+mirroring the REST path exactly. It is a pure `kh` wrapper and holds no REST
+client: when the binary is absent, `khVersion()` returns `null` and the caller
+decides. That caller is [`scripts/seed.ts`](./scripts/seed.ts), and **the
+fallback lives there** — it branches on the null and arms over the REST client
+instead, so the CLI is a real path and never a hard dependency.
 
 ### The `/verify` dashboard
 
@@ -871,12 +1008,13 @@ or demo mode the route is a plain `404` — absent rather than merely disabled.
 
 ```bash
 pnpm check               # fast local gate: lint, types, TS coverage, contract tests
-pnpm test                # 580 TypeScript tests
+pnpm test                # 720 TypeScript tests
 pnpm contracts:test      # 54 Solidity tests
 pnpm contracts:coverage  # prove 100%
 pnpm e2e                 # 34 Playwright tests over the published pages
 pnpm lint                # eslint
 pnpm typecheck           # tsc --noEmit
+make submission-check    # placeholders, required links, tracked images: READY / NOT READY
 ```
 
 `pnpm check` is the **fast** gate, not everything CI runs — CI additionally runs
@@ -894,15 +1032,16 @@ Lighthouse. `make help` lists every target.
 ```
 src/
   keeperhub.ts     KeeperHub client — retry/backoff, rate pacing, idempotency
-  watcher.ts       the autonomous loop: scan → assess → revoke (imports no model)
-  rules.ts         four threat rules + the hold channel
+  watcher.ts       the autonomous loop: collect → gate → execute (imports no model)
+  rules.ts         four threat rules + two holds
   permit2.ts       Permit2 ledger reads, events, and the guard-helper resolution
   revoke.ts        atomic check-and-execute — approve(0) and lockdown()
   chain.ts         read-side chain access (viem)
+  lists.ts         the watchlist / deny-list loaders, defined once for both entry points
   audit.ts         structured audit trail + SSE subscriber hook
-  server.ts        the /verify dashboard, SSE, and POST /revoke
+  server.ts        the /verify dashboard, SSE, POST /revoke, GET /healthz
   mcp.ts           MCP query surface — 4 tools, the write gated on confirm:true
-  config.ts        credential resolution + demo mode
+  config.ts        credential resolution, demo mode, the operator allow-list
 scripts/
   spike.ts         7-step integration proof
   seed.ts          idempotent ERC-20 threat staging (via kh CLI, REST fallback)
@@ -930,11 +1069,12 @@ workflows/
 - [x] MCP query surface and real `kh` CLI usage
 - [x] Gas escalation ladder + terminal-state polling
 - [x] Reproducible seed + p50/p95 benchmark, live SSE dashboard
-- [x] CI, security scanning, 668 tests (100% coverage on `src/`, `scripts/` and contracts)
+- [x] Three refusal rails — per-exposure holds, the correlated-failure brake, a rolling 24h ceiling
+- [x] CI, security scanning, 808 tests (100% coverage on `src/`, `scripts/` and contracts)
 - [ ] Deploy the sentinel workflow (blocked on a Pro-tier plan, not on code)
 - [ ] Durable cursor, so a restart does not lose grants older than the log window
 - [ ] Indexer-backed token discovery, removing the watchlist limit
-- [ ] Mainnet with a policy layer — spending caps, daily revoke ceiling, allow-list escape hatch
+- [ ] Mainnet with the rest of the policy layer — per-token spending caps on top of the rails already shipped
 
 ---
 
