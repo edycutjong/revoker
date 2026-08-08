@@ -445,13 +445,11 @@ td.hot{color:var(--text); font-weight:700}
 .limits h3{font-size:.98rem; margin-bottom:5px; max-width:var(--prose-sm)}
 .limits p{font-size:.9rem; color:var(--muted); margin:0; max-width:var(--prose-sm); text-wrap:pretty}
 
-/* ---------- demo placeholder ---------- */
-.video-placeholder{aspect-ratio:16/9; border:1.5px dashed var(--line2); border-radius:14px;
-  background:var(--panel); display:flex; flex-direction:column; align-items:center; justify-content:center;
-  gap:10px; text-align:center; padding:20px}
-.video-placeholder svg{color:var(--muted); opacity:.6}
-.video-placeholder p{margin:0; color:var(--muted); font-size:.92rem; max-width:420px}
-.video-placeholder .vp-title{font-weight:600; color:var(--text)}
+/* ---------- demo video ---------- */
+.video-embed{aspect-ratio:16/9; border:1px solid var(--line); border-radius:14px;
+  overflow:hidden; background:#000; box-shadow:var(--shadow)}
+.video-embed iframe{display:block; width:100%; height:100%; border:0}
+.video-cap{margin:14px auto 0; max-width:var(--prose-sm); color:var(--muted); font-size:.9rem}
 
 /* ---------- footer ---------- */
 .site-foot{border-top:1px solid var(--line); padding:44px 0 56px; font-size:.88rem; color:var(--muted)}
@@ -940,25 +938,20 @@ td.hot{color:var(--text); font-weight:700}
         <p class="eyebrow">Demo</p>
         <h2 id="demo-h">Watch the full cycle.</h2>
       </div>
-      <!-- DEMO VIDEO PLACEHOLDER ————————————————————————————————————————————
-           When the video is published, replace the .video-placeholder div below with:
-
-           <div style="aspect-ratio:16/9;border-radius:14px;overflow:hidden;border:1px solid var(--line)">
-             <iframe width="100%" height="100%" src="https://www.youtube-nocookie.com/embed/VIDEO_ID"
-               title="Revoker — demo" frameborder="0"
-               allow="accelerometer; clipboard-write; encrypted-media; picture-in-picture"
-               allowfullscreen></iframe>
-           </div>
-
-           (This embed is the page's single intentional exception to the
-           no-external-requests rule, added only once the video exists.)
-      ——————————————————————————————————————————————————————————————————— -->
-      <div class="video-placeholder">
-        <svg width="42" height="42" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 8.5v7l6-3.5z" fill="currentColor"/></svg>
-        <p class="vp-title">Demo video — not yet published</p>
-        <p>The recorded run of the exact cycle proven above: seed the threat, watch Revoker
-          detect and revoke it, then verify on-chain. This section will hold the embed.</p>
+      <!-- This iframe is the page's single intentional exception to the
+           no-external-requests rule; scripts/check-site-selfcontained.sh
+           whitelists youtube-nocookie.com and nothing else. Privacy-mode host,
+           lazy-loaded, so nothing is fetched until the section is reached. -->
+      <div class="video-embed">
+        <iframe src="https://www.youtube-nocookie.com/embed/6q7XvVC5nK4"
+          title="Revoker — the drainer fired anyway, and got nothing" loading="lazy"
+          allow="accelerometer; clipboard-write; encrypted-media; picture-in-picture"
+          referrerpolicy="strict-origin-when-cross-origin"
+          allowfullscreen></iframe>
       </div>
+      <p class="video-cap">2:34 · the exact cycle proven above — seed the threat, watch Revoker
+        detect and revoke it, then let the drainer fire anyway.
+        <a href="https://youtu.be/6q7XvVC5nK4" rel="noopener">Watch on YouTube &nearr;</a></p>
     </div>
   </section>
 

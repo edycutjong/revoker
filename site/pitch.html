@@ -222,9 +222,13 @@ h2{font-size:72px; line-height:1.06}
 .k-big{font:700 130px/1 var(--font-mono); letter-spacing:-.03em; color:var(--ok); margin:30px 0 18px}
 .k-sub{font:20px/1.5 var(--font-mono); color:var(--muted)}
 .k-sub b{color:var(--text); font-weight:600}
-.video-chip{display:flex; align-items:center; gap:18px; border:1.5px dashed var(--line);
-  border-radius:12px; padding:18px 24px; color:var(--muted); font-size:18px; line-height:1.4}
+/* Solid border, not dashed — it is a real destination now, not a placeholder. */
+.video-chip{display:flex; align-items:center; gap:18px; border:1.5px solid var(--line2);
+  border-radius:12px; padding:18px 24px; color:var(--muted); font-size:18px; line-height:1.4;
+  text-decoration:none; transition:border-color .16s ease, background .16s ease}
+.video-chip:hover{border-color:var(--accent); background:var(--accent-dim); text-decoration:none}
 .video-chip svg{flex:0 0 auto; opacity:.6}
+.video-chip:hover svg{opacity:1; color:var(--accent)}
 .video-chip b{color:var(--text); font-weight:600}
 
 /* ═══════════ slide 6 — architecture ═══════════ */
@@ -507,13 +511,13 @@ h2{font-size:72px; line-height:1.06}
           <p class="k-big">took 0</p>
           <p class="k-sub">balance unchanged: <b>10,000 mUSDC</b><br>across the whole sequence</p>
         </div>
-        <!-- SWAP: demo video — when published, replace this chip with the video link/embed.
-             No URL exists yet; do not invent one. -->
-        <div class="video-chip">
+        <!-- A link, not an embed: this deck is presented full-screen and an
+             iframe here would load YouTube on every slide render. -->
+        <a class="video-chip" href="https://youtu.be/6q7XvVC5nK4" target="_blank" rel="noopener">
           <svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 8.5v7l6-3.5z" fill="currentColor"/></svg>
-          <span><b>Demo video — not yet published.</b> The recorded run of this exact cycle
-            will link here.</span>
-        </div>
+          <span><b>Watch the 2:34 demo &nearr;</b> The recorded run of this exact cycle —
+            the drain fires at the end, and takes nothing.</span>
+        </a>
       </div>
     </div>
     <aside class="speaker-notes">Three real transactions, in order. We armed a real trap, Revoker killed the allowance in one autonomous cycle — and then, this is the part I love, we let the drainer fire anyway. It succeeded. It took zero. The proof isn't that the attack was blocked; it's that it hit an empty room. Open any of these hashes right now.</aside>
