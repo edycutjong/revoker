@@ -15,6 +15,8 @@
 
   <br/>
 
+  [![Live Demo](https://img.shields.io/badge/🌐_Live-Demo-06b6d4?style=for-the-badge)](https://edycutjong.github.io/revoker/)
+  [![Pitch Deck](https://img.shields.io/badge/📊_Pitch-Deck-f59e0b?style=for-the-badge)](https://edycutjong.github.io/revoker/pitch.html)
   [![Built for Agents Onchain](https://img.shields.io/badge/DoraHacks-Agents_Onchain-8b5cf6?style=for-the-badge)](https://dorahacks.io/hackathon/agents-onchain)
   [![Execution layer: KeeperHub](https://img.shields.io/badge/⚡_Execution-KeeperHub-06b6d4?style=for-the-badge)](https://keeperhub.com)
 
@@ -27,6 +29,8 @@
   ![Ethereum](https://img.shields.io/badge/Sepolia-3C3C3D?style=flat&logo=ethereum&logoColor=white)
   [![License](https://img.shields.io/badge/License-MIT-yellow)](https://opensource.org/licenses/MIT)
   [![CI](https://github.com/edycutjong/revoker/actions/workflows/ci.yml/badge.svg)](https://github.com/edycutjong/revoker/actions/workflows/ci.yml)
+  [![Release](https://img.shields.io/github/v/release/edycutjong/revoker?display_name=tag&sort=semver&color=35d07f)](https://github.com/edycutjong/revoker/releases/latest)
+  [![Coverage](https://img.shields.io/badge/contract_coverage-100%25-35d07f)](./contracts/test)
 
 </div>
 
