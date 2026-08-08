@@ -1,0 +1,16 @@
+{
+  // E2E specs get DOM types, the agent does not.
+  //
+  // page.evaluate() bodies run in the browser, so they need `document`,
+  // HTMLElement and getComputedStyle. Adding "DOM" to the root tsconfig would
+  // hand those globals to src/ as well — and src/ is a long-running Node agent
+  // where a stray `document` or `localStorage` should be a compile error, not a
+  // runtime crash at 3am. Scoping the lib to this directory keeps that error
+  // where it belongs.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["**/*.ts", "../playwright.config.ts"]
+}

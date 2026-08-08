@@ -39,3 +39,13 @@ bench:  ## N=25 detect->revoke benchmark, writes BENCHMARK.md
 
 clean:  ## Remove build artifacts
 	rm -rf coverage contracts/out contracts/cache audit
+
+e2e:  ## Playwright E2E over the published pages
+	pnpm e2e
+
+lighthouse:  ## Lighthouse budgets (a11y, SEO, perf) against site/
+	pnpm lighthouse
+
+security-scan:  ## Secret scan + dependency audit, as CI runs them
+	bash scripts/check-no-credentials.sh
+	pnpm audit --audit-level=high

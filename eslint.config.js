@@ -21,7 +21,14 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        projectService: {
+          // playwright.config.ts belongs to e2e/tsconfig.json, but the project
+          // service resolves from the nearest tsconfig — which is the root one,
+          // and that deliberately covers Node sources only. Allow it as a
+          // default-project file so it is still linted, rather than adding it to
+          // `ignores` and leaving a config file unchecked.
+          allowDefaultProject: ['playwright.config.ts'],
+        },
         tsconfigRootDir: import.meta.dirname,
       },
     },

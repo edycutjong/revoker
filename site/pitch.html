@@ -100,6 +100,15 @@ h2{font-size:72px; line-height:1.06}
 .counter{right:26px; bottom:20px; font-variant-numeric:tabular-nums}
 .hint{left:26px; bottom:20px; transition:opacity .5s ease}
 .hint.gone{opacity:0}
+/* top-right: .hint owns bottom-left and .counter bottom-right, and the
+   progress bar runs along the bottom edge */
+/* No opacity dimming here. Fading var(--muted) to .55 rendered as #464c56 on
+   #05070a — 2.33:1, against the 4.5:1 minimum — and Lighthouse failed the deck
+   on it. The sibling .counter and .hint sit at full muted and pass, so this
+   matches them and earns its recessive feel from size and position instead. */
+.ver-hud{right:26px; top:22px; text-decoration:none; font-weight:500;
+  transition:color .16s ease}
+.ver-hud:hover{color:var(--accent); text-decoration:none}
 .progress{position:fixed; left:0; bottom:0; height:3px; width:100%; z-index:59; background:transparent}
 .progress i{display:block; height:100%; background:var(--accent); width:0; transition:width .3s ease}
 .presenter .counter,.presenter .hint{color:var(--muted); opacity:.65}
@@ -771,6 +780,7 @@ h2{font-size:72px; line-height:1.06}
 </div><!-- /viewport -->
 
 <div class="hud counter" id="counter" aria-hidden="true">01 / 11</div>
+<a class="hud ver-hud" href="https://github.com/edycutjong/revoker/releases/latest" rel="noopener">v<!--VERSION-->1.4.1<!--/VERSION--></a>
 <div class="hud hint" id="hint" aria-hidden="true">&larr; &rarr; navigate &middot; ESC overview &middot; P presenter &middot; C contrast</div>
 <div class="progress" aria-hidden="true"><i id="progressbar"></i></div>
 <div class="notes-panel" id="notes" aria-live="polite">

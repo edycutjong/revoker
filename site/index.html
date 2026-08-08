@@ -505,6 +505,11 @@ td.hot{color:var(--text); font-weight:700}
 .foot-links a{color:var(--muted); transition:color .16s ease}
 .foot-links a:hover{color:var(--text)}
 .foot-line{margin-top:26px; font-size:.8rem; max-width:var(--prose-sm)}
+.foot-ver{margin-top:12px; font-size:.78rem; color:var(--muted); display:flex; align-items:center; gap:8px}
+.foot-ver a{color:inherit; text-decoration:none}
+.foot-ver a:hover .ver{border-color:var(--accent); color:var(--accent)}
+.ver{display:inline-block; font-family:var(--mono); font-size:.95em; letter-spacing:.01em;
+  border:1px solid var(--line2); border-radius:999px; padding:1px 9px; transition:border-color .16s ease, color .16s ease}
 
 /* ---------- reveal animation (JS-gated; no-JS and reduced-motion see everything) ---------- */
 .js-anim .reveal{opacity:0; transform:translateY(14px);
@@ -1020,6 +1025,7 @@ td.hot{color:var(--text); font-weight:700}
     <p class="foot-line">Built for <a href="https://dorahacks.io/hackathon/agents-onchain" rel="noopener">Agents Onchain</a>,
       KeeperHub&rsquo;s hackathon · MIT license · every claim on this page traces to a transaction
       or to the <a href="https://github.com/edycutjong/revoker" rel="noopener">repository</a>.</p>
+    <p class="foot-ver"><a href="https://github.com/edycutjong/revoker/releases/latest" rel="noopener"><span class="ver">v<!--VERSION-->1.4.1<!--/VERSION--></span></a> &middot; released automatically from Conventional Commits</p>
   </div>
 </footer>
 
