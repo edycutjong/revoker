@@ -116,8 +116,10 @@ if (!KEY) {
     'app.keeperhub.com → Settings → API Keys → Organisation, then:\n\n            export KH_API_KEY=kh_your_key_here\n            node quickstart.mjs')
 }
 if (!KEY.startsWith('kh_')) {
+  // Deliberately does NOT echo any part of the value. Whatever was pasted here
+  // is a secret of *some* kind, and this message ends up in terminals and CI logs.
   die('KH_API_KEY does not look like a KeeperHub key',
-    `It starts "${KEY.slice(0, 4)}…" — organisation keys start "kh_".`,
+    'Organisation keys start "kh_"; the value that is set does not.',
     'Make sure you copied an Organisation key, not a personal token.')
 }
 

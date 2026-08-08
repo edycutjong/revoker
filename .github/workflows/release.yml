@@ -23,7 +23,7 @@ jobs:
       # be read. release-please will simply find nothing to release from them,
       # which is correct rather than broken. It takes over from the first
       # conventional commit onward; see CONTRIBUTING.md.
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         id: release
         with:
           config-file: .release-please-config.json
