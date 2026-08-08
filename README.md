@@ -238,8 +238,8 @@ signer address in the `from` field.
 
 | Metric | p50 | p95 | min | max |
 |---|---|---|---|---|
-| **response** — detection → revoke confirmed | **12.95s** | 24.88s | 10.33s | 24.95s |
-| **exposure** — threat live → revoke confirmed | **13.38s** | 25.01s | 10.47s | 25.28s |
+| **response** — detection → revoke confirmed | **13.47s** | 25.17s | 9.31s | 26.55s |
+| **exposure** — threat live → revoke confirmed | **13.71s** | 25.55s | 9.72s | 26.71s |
 
 25/25 cycles succeeded. Gas per revoke was 46,482 at both p50 and p95 (range
 46,458–46,482 across the run), sponsored in every cycle. Two figures rather than
