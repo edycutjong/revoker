@@ -35,15 +35,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Verify the site is self-contained
-        run: |
-          # These pages are served under a strict no-dependency rule: no CDN, no
-          # webfonts, no analytics. Catch a regression here rather than on the
-          # live domain.
-          if grep -rInE '<script[^>]+src="http|<link[^>]+href="https?://(?!fonts\.gstatic)|@import +url\(https?:' site/ ; then
-            echo "::error::site/ contains an external resource reference"
-            exit 1
-          fi
-          echo "site/ is self-contained"
+        run: bash scripts/check-site-selfcontained.sh
 
       - uses: actions/configure-pages@v5
 

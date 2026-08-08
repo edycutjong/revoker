@@ -23,7 +23,8 @@
     "contracts:test": "cd contracts && forge test -vv",
     "check": "pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm contracts:test",
     "contracts:coverage": "cd contracts && forge coverage --report summary",
-    "check:submission": "bash scripts/check-submission-ready.sh"
+    "check:submission": "bash scripts/check-submission-ready.sh",
+    "check:site": "bash scripts/check-site-selfcontained.sh"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

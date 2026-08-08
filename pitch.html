@@ -1,0 +1,929 @@
+<!doctype html>
+<!--
+  ═══════════════════════════════════════════════════════════════════
+  Revoker — pitch deck · single self-contained file, zero external
+  requests (no CDN, no fonts, no images) · works opened from file://
+
+  KEYS
+    ← / → or Space ... previous / next slide
+    ESC .............. overview grid (click a slide to jump)
+    P ................ presenter mode (speaker-notes panel, dimmed chrome)
+    C ................ contrast debug (outlines every text element)
+    Home / End ....... first / last slide
+
+  PRINT TO PDF
+    Cmd/Ctrl+P → destination "Save as PDF" → Landscape →
+    one slide per page (16in × 9in), backgrounds forced on.
+
+  SWAP POINTS (search for "SWAP:")
+    · slide 5 — demo-video chip (video not yet published)
+    · slide 11 — QR placeholder (generate a QR to the repo)
+
+  REBRAND: edit the CSS variables at the top of <style>.
+  ═══════════════════════════════════════════════════════════════════
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Revoker — pitch deck</title>
+<meta name="description" content="Pitch deck for Revoker: the autonomous agent that lands the revoke before the drainer moves. Built for Agents Onchain, KeeperHub's hackathon." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cdefs%3E%3Cmask id='m'%3E%3Crect width='512' height='512' fill='%23fff'/%3E%3Cline x1='132' y1='380' x2='380' y2='132' stroke='%23000' stroke-width='104' stroke-linecap='round'/%3E%3C/mask%3E%3C/defs%3E%3Crect width='512' height='512' rx='104' fill='%2312161d'/%3E%3Ccircle cx='256' cy='256' r='140' fill='none' stroke='%234ea1ff' stroke-width='60' mask='url(%23m)'/%3E%3Cline x1='132' y1='380' x2='380' y2='132' stroke='%23e6e9ef' stroke-width='46' stroke-linecap='round'/%3E%3C/svg%3E" />
+<style>
+/* ═══════════ tokens — full rebrand in 30s ═══════════
+   Family tokens shared with build/index.html and the /verify dashboard.
+   Semantic colour is load-bearing: red = threat, green = confirmed/safe,
+   amber = in-flight/caveat. Colour follows OUTCOME, never actor. */
+:root{
+  color-scheme:dark;
+  --color-bg:#0a0c10;         --bg:var(--color-bg);
+  --color-primary:#e6e9ef;    --text:var(--color-primary);
+  --color-accent:#4ea1ff;     --accent:var(--color-accent);
+  --panel:#12161d; --panel2:#171d26;
+  --line:#2b3442; --muted:#7b8494;
+  --danger:#ff5c5c; --ok:#35d07f; --warn:#ffb547;
+  --danger-dim:rgba(255,92,92,.10);  --danger-line:rgba(255,92,92,.38);
+  --ok-dim:rgba(53,208,127,.10);     --ok-line:rgba(53,208,127,.42);
+  --warn-dim:rgba(255,181,71,.10);   --warn-line:rgba(255,181,71,.38);
+  --accent-dim:rgba(78,161,255,.10); --accent-line:rgba(78,161,255,.38);
+  --shadow:0 18px 50px -22px rgba(0,0,0,.65);
+  --font-display:-apple-system,BlinkMacSystemFont,"Segoe UI Variable","Segoe UI",system-ui,sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box; margin:0}
+html,body{height:100%}
+body{
+  background:#05070a; /* letterbox the BROWSER, not the slide */
+  color:var(--text);
+  font:22px/1.5 var(--font-display);
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  overflow:hidden;
+}
+::selection{background:var(--accent); color:#0a0c10}
+a{color:var(--accent); text-decoration:none}
+a:hover{text-decoration:underline; text-underline-offset:3px}
+:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:4px}
+code{font-family:var(--font-mono); font-variant-numeric:tabular-nums}
+aside.speaker-notes{display:none} /* surfaced only via the presenter panel */
+
+/* ═══════════ stage: fixed 1920×1080, scaled to fit ═══════════ */
+.viewport{position:fixed; inset:0}
+.presenter .viewport{bottom:20vh}
+.stage{width:1920px; height:1080px; position:absolute; left:50%; top:50%;
+  transform:translate(-50%,-50%); background:var(--bg); overflow:hidden}
+.slide{position:absolute; inset:0; display:none; flex-direction:column;
+  padding:96px 130px; background:var(--bg)}
+.slide.current{display:flex; animation:sfade .3s ease}
+@keyframes sfade{from{opacity:0}}
+
+/* ═══════════ shared primitives (family recipes) ═══════════ */
+.eyebrow{font:600 20px/1 var(--font-display); text-transform:uppercase;
+  letter-spacing:.13em; color:var(--accent); margin-bottom:22px}
+h1,h2{font-weight:700; letter-spacing:-.02em; text-wrap:balance}
+h2{font-size:72px; line-height:1.06}
+.lede{color:var(--muted); font-size:26px; line-height:1.5; margin-top:20px;
+  max-width:900px; text-wrap:pretty}
+.lede b,.lede .strong{color:var(--text); font-weight:600}
+.mono{font-family:var(--font-mono); font-variant-numeric:tabular-nums}
+.panel{background:var(--panel); border:1px solid var(--line); border-radius:14px}
+.tag{display:inline-block; font:700 15px/1 var(--font-mono); text-transform:uppercase;
+  letter-spacing:.09em; border-radius:5px; padding:6px 12px}
+.tag.danger{color:var(--danger); background:var(--danger-dim); border:1px solid var(--danger-line)}
+.tag.warn{color:var(--warn); background:var(--warn-dim); border:1px solid var(--warn-line)}
+.tag.ok{color:var(--ok); background:var(--ok-dim); border:1px solid var(--ok-line)}
+.tx{font-family:var(--font-mono); font-size:19px; color:var(--accent)}
+.tx::after{content:"\2197"; font-size:.8em; margin-left:5px; opacity:.75}
+
+/* ═══════════ HUD chrome ═══════════ */
+.hud{position:fixed; z-index:60; font:600 15px/1 var(--font-mono); color:var(--muted);
+  letter-spacing:.06em; user-select:none}
+.counter{right:26px; bottom:20px; font-variant-numeric:tabular-nums}
+.hint{left:26px; bottom:20px; transition:opacity .5s ease}
+.hint.gone{opacity:0}
+.progress{position:fixed; left:0; bottom:0; height:3px; width:100%; z-index:59; background:transparent}
+.progress i{display:block; height:100%; background:var(--accent); width:0; transition:width .3s ease}
+.presenter .counter,.presenter .hint{color:var(--muted); opacity:.65}
+.hide-cursor, .hide-cursor *{cursor:none !important}
+
+/* presenter notes panel — bottom 20% */
+.notes-panel{display:none; position:fixed; left:0; right:0; bottom:0; height:20vh; z-index:70;
+  background:var(--panel); border-top:1px solid var(--line); padding:22px 34px;
+  overflow:auto; font-size:19px; line-height:1.55; color:var(--text)}
+.presenter .notes-panel{display:block}
+.notes-panel .np-label{font:700 13px/1 var(--font-mono); text-transform:uppercase;
+  letter-spacing:.1em; color:var(--accent); margin-bottom:10px}
+.notes-panel .np-next{margin-top:12px; color:var(--muted); font-size:16px}
+.notes-panel .np-next b{color:var(--text); font-weight:600}
+
+/* overview grid (ESC) — slides shrink in place inside the 1920×1080 stage */
+.overview .slide{display:flex !important; position:relative; inset:auto; flex:0 0 auto;
+  width:1920px; height:1080px; transform:scale(.21); transform-origin:top left;
+  margin:0 calc(-1920px * .79 + 26px) calc(-1080px * .79 + 26px) 0;
+  outline:2px solid var(--line); border-radius:10px; overflow:hidden; cursor:pointer;
+  animation:none}
+.overview .slide.current{outline:3px solid var(--accent)}
+.overview .slide *{pointer-events:none}
+.overview .stage{display:flex; flex-wrap:wrap; align-content:center;
+  justify-content:center; padding:40px 60px}
+
+/* ═══════════ contrast debug — press C ═══════════ */
+/* Press C to toggle contrast debug mode: verifies projector visibility */
+.debug-contrast .slide :is(h1,h2,h3,p,span,a,li,code,figcaption,td,th),
+.contrast-check{outline:1px dashed rgba(255,92,92,.55); outline-offset:1px}
+
+/* ═══════════ slide 1 — cover ═══════════ */
+.cover{flex-direction:row; align-items:center; gap:70px}
+.cover-left{flex:1 1 auto; min-width:0}
+.badge{display:inline-flex; align-items:center; gap:10px; font:600 17px/1 var(--font-mono);
+  color:var(--muted); background:var(--panel); border:1px solid var(--line);
+  border-radius:999px; padding:10px 20px; margin-bottom:46px}
+.badge i{width:9px; height:9px; border-radius:50%; background:var(--accent); flex:0 0 auto}
+.cover h1{font-size:150px; line-height:1; letter-spacing:-.03em}
+.cover .tagline{font-size:40px; color:var(--muted); margin-top:26px; max-width:760px;
+  line-height:1.3; text-wrap:balance}
+.cover .tagline b{color:var(--text); font-weight:600}
+.cover-term{display:inline-flex; align-items:center; gap:2px; margin-top:52px;
+  font:22px/1 var(--font-mono); color:var(--text);
+  background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px 26px}
+.cover-term .ps1{color:var(--ok); margin-right:14px}
+.caret{display:inline-block; width:12px; height:26px; background:var(--accent);
+  margin-left:8px; animation:blink 1.1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.cover-meta{margin-top:44px; font:17px/1.6 var(--font-mono); color:var(--muted); letter-spacing:.02em}
+.cover-mark{flex:0 0 auto; width:520px; height:520px}
+
+/* ═══════════ slide 2 — hook ═══════════ */
+.hook{justify-content:center}
+.hook .bigcode{font:700 92px/1.15 var(--font-mono); letter-spacing:-.03em; margin:30px 0 44px}
+.hook .bigcode .fn{color:var(--text)}
+.hook .bigcode .max{color:var(--danger)}
+.hook .after{font-size:30px; color:var(--muted); max-width:1020px; line-height:1.5; text-wrap:pretty}
+.hook .after b{color:var(--text); font-weight:600}
+
+/* ═══════════ slide 3 — problem ═══════════ */
+.split{flex-direction:row; gap:90px; align-items:center}
+.split .col-l{flex:1 1 54%; min-width:0}
+.split .col-r{flex:1 1 46%; min-width:0}
+.alert-mock{border-left:4px solid var(--danger); box-shadow:var(--shadow); padding:34px 38px}
+.alert-mock .am-head{display:flex; align-items:center; gap:14px; margin-bottom:18px}
+.alert-mock .am-title{font:700 20px/1 var(--font-mono); letter-spacing:.04em; color:var(--danger)}
+.alert-mock p{font-size:22px; color:var(--text); line-height:1.55}
+.alert-mock .am-meta{font:18px/1.7 var(--font-mono); color:var(--muted); margin-top:16px}
+.alert-mock .am-btn{display:inline-block; margin-top:26px; font:600 18px/1 var(--font-display);
+  color:var(--muted); border:1px solid var(--line); border-radius:9px; padding:12px 24px}
+.mock-caption{font-size:20px; color:var(--muted); margin-top:22px; text-wrap:pretty}
+.mock-caption b{color:var(--text); font-weight:600}
+
+/* ═══════════ slide 4 — solution + terminal ═══════════ */
+.term{background:var(--panel); border:1px solid var(--line); border-radius:14px;
+  overflow:hidden; box-shadow:var(--shadow); margin-top:52px}
+.term-bar{display:flex; align-items:center; gap:9px; padding:16px 22px;
+  background:var(--panel2); border-bottom:1px solid var(--line)}
+.term-bar i{width:13px; height:13px; border-radius:50%; background:var(--line)}
+.term-bar .term-title{margin-left:14px; font:16px/1 var(--font-mono); color:var(--muted); letter-spacing:.03em}
+.term-body{padding:30px 34px; font:22px/1.95 var(--font-mono); font-variant-numeric:tabular-nums}
+.term-body .ps1{color:var(--ok)}
+.term-body .t-mut{color:var(--muted)}
+.term-body .t-danger{color:var(--danger)}
+.term-body .t-warn{color:var(--warn)}
+.term-body .t-ok{color:var(--ok)}
+.term-body b{color:var(--text); font-weight:600}
+
+/* ═══════════ slide 5 — demo / the three transactions ═══════════ */
+.demo-grid{display:flex; gap:56px; margin-top:48px; align-items:stretch; flex:1 1 auto; min-height:0}
+.proof-col{flex:1 1 58%; display:flex; flex-direction:column; gap:22px; min-width:0}
+.proof-row{position:relative; display:flex; gap:24px; padding:26px 30px;
+  background:var(--panel); border:1px solid var(--line); border-left-width:4px; border-radius:12px}
+.proof-row.is-danger{border-left-color:var(--danger)}
+.proof-row.is-warn{border-left-color:var(--warn)}
+.proof-row.is-ok{border-left-color:var(--ok); border-color:var(--ok-line);
+  background:linear-gradient(180deg,var(--ok-dim),transparent 60%),var(--panel)}
+.pnum{flex:0 0 auto; width:52px; height:52px; border-radius:50%; background:var(--panel2);
+  border:2px solid var(--line); display:flex; align-items:center; justify-content:center;
+  font:700 24px/1 var(--font-mono); color:var(--muted); font-variant-numeric:tabular-nums}
+.proof-row.is-danger .pnum{border-color:var(--danger-line); color:var(--danger)}
+.proof-row.is-warn .pnum{border-color:var(--warn-line); color:var(--warn)}
+.proof-row.is-ok .pnum{border-color:var(--ok); color:var(--ok); box-shadow:0 0 0 5px var(--ok-dim)}
+.proof-body{min-width:0}
+.proof-body h3{font-size:27px; margin:12px 0 8px; letter-spacing:-.01em}
+.proof-body .p-desc{font-size:20px; color:var(--muted); line-height:1.45; text-wrap:pretty}
+.proof-body .p-desc b{color:var(--text); font-weight:600}
+.proof-meta{display:flex; gap:12px 30px; flex-wrap:wrap; align-items:baseline;
+  border-top:1px dashed var(--line); margin-top:14px; padding-top:14px}
+.p-result{font:19px/1 var(--font-mono); color:var(--muted)}
+.p-result b{color:var(--text); font-weight:700}
+.p-result.ok b{color:var(--ok)}
+.kick-col{flex:1 1 42%; display:flex; flex-direction:column; gap:26px; min-width:0}
+.kicker{flex:1 1 auto; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  text-align:center; background:linear-gradient(180deg,var(--panel2),var(--panel));
+  border:1px solid var(--ok-line); border-radius:16px; padding:40px 44px; box-shadow:var(--shadow)}
+.kicker .k-line{font-size:24px; color:var(--muted); line-height:1.5; text-wrap:pretty; max-width:480px}
+.kicker .k-line b{color:var(--text); font-weight:600}
+.k-big{font:700 130px/1 var(--font-mono); letter-spacing:-.03em; color:var(--ok); margin:30px 0 18px}
+.k-sub{font:20px/1.5 var(--font-mono); color:var(--muted)}
+.k-sub b{color:var(--text); font-weight:600}
+.video-chip{display:flex; align-items:center; gap:18px; border:1.5px dashed var(--line);
+  border-radius:12px; padding:18px 24px; color:var(--muted); font-size:18px; line-height:1.4}
+.video-chip svg{flex:0 0 auto; opacity:.6}
+.video-chip b{color:var(--text); font-weight:600}
+
+/* ═══════════ slide 6 — architecture ═══════════ */
+.arch{width:100%; height:auto; margin-top:44px}
+.arch .n-box{fill:var(--panel); stroke:var(--line); stroke-width:1.5}
+.arch .n-chip{fill:var(--panel2); stroke:var(--line); stroke-width:1.2}
+.arch .n-title{font:600 25px var(--font-display); fill:var(--text); letter-spacing:-.01em}
+.arch .n-sub{font:17px var(--font-mono); fill:var(--muted)}
+.arch .n-chip-t{font:18px var(--font-mono); fill:var(--text)}
+.arch .n-chip-t tspan{fill:var(--muted)}
+.arch .edge{stroke:var(--accent); stroke-width:2.5; fill:none}
+.arch .edge-dash{stroke:var(--line); stroke-width:2; stroke-dasharray:6 7; fill:none}
+.arch .edge-label{font:600 16px var(--font-mono); fill:var(--muted); letter-spacing:.02em}
+.arch .atomic-r{fill:var(--ok-dim); stroke:var(--ok-line); stroke-width:1.6}
+.arch .atomic-t{font:700 14px var(--font-mono); fill:var(--ok); letter-spacing:.1em}
+.arch .arrow-ok{font:700 20px var(--font-mono); fill:var(--ok)}
+
+/* ═══════════ slide 7 — the race ═══════════ */
+.race{display:grid; grid-template-columns:1fr 1fr; gap:36px; margin-top:44px}
+.race-col{border:1px solid var(--line); border-radius:16px; padding:34px 36px;
+  background:var(--panel); display:flex; flex-direction:column}
+.race-col.bad{border-color:var(--danger-line)}
+.race-col.good{border-color:var(--ok-line)}
+.race-col h3{font:700 26px/1.2 var(--font-mono); letter-spacing:-.01em}
+.race-col .who{display:block; font:400 19px/1.3 var(--font-display); color:var(--muted); margin:8px 0 26px}
+.race-body{flex:1 1 auto; display:flex; flex-direction:column; justify-content:center}
+.op{display:flex; align-items:center; gap:16px; background:var(--panel2);
+  border:1px solid var(--line); border-radius:10px; padding:16px 20px;
+  font:20px/1.3 var(--font-mono); font-variant-numeric:tabular-nums}
+.op + .op{margin-top:14px}
+.op-n{flex:0 0 auto; width:26px; height:26px; border-radius:6px; border:1px solid var(--line);
+  color:var(--muted); font:700 14px/24px var(--font-mono); text-align:center}
+.op-out{color:var(--muted); margin-left:auto; padding-left:12px; font-size:18px}
+.race-gap{border:2px dashed var(--danger-line); background:var(--danger-dim); border-radius:10px;
+  padding:18px 22px; margin:16px 0; font-size:19px; color:var(--muted); line-height:1.5}
+.gap-label{display:flex; align-items:center; gap:12px; font:700 15px/1 var(--font-mono);
+  text-transform:uppercase; letter-spacing:.09em; color:var(--danger); margin-bottom:8px}
+.gap-label::after{content:""; flex:1 1 auto; height:1px; background:var(--danger-line)}
+.atomic-box{border:2px solid var(--ok-line); background:var(--ok-dim); border-radius:12px; padding:20px}
+.atomic-box .op{background:var(--panel)}
+.atomic-arrow{text-align:center; color:var(--ok); font:700 20px/1 var(--font-mono); padding:8px 0}
+.atomic-tag{display:block; text-align:center; font:700 15px/1 var(--font-mono);
+  text-transform:uppercase; letter-spacing:.09em; color:var(--ok); margin-top:16px}
+.verdict{margin-top:26px; padding-top:20px; border-top:1px dashed var(--line);
+  font-size:21px; line-height:1.45; min-height:3.4em}
+.verdict.bad{color:var(--muted)}
+.verdict.good{color:var(--text)}
+.observed{margin-top:36px; font-size:19px; color:var(--muted)}
+.observed .obs-pre{display:block; margin-top:12px; padding:14px 20px; background:var(--panel);
+  border:1px solid var(--line); border-radius:10px; font:19px/1.4 var(--font-mono);
+  color:var(--text); white-space:nowrap; overflow:hidden}
+.observed .obs-eq{display:block; margin-top:10px; font:17px/1.4 var(--font-mono); color:var(--muted)}
+.observed .obs-eq b{color:var(--text); font-weight:600}
+
+/* ═══════════ slide 8 — keeperhub ═══════════ */
+.kh-grid{display:flex; gap:70px; margin-top:44px; flex:1 1 auto; min-height:0}
+.kh-left{flex:1 1 46%; min-width:0; display:flex; flex-direction:column; gap:34px}
+.kh-right{flex:1 1 54%; min-width:0}
+.mini-stats{display:flex; gap:16px; flex-wrap:wrap}
+.mini-stat{font:19px/1 var(--font-mono); color:var(--muted); border:1px solid var(--line);
+  background:var(--panel); border-radius:999px; padding:12px 22px; font-variant-numeric:tabular-nums}
+.mini-stat b{color:var(--accent); font-weight:700}
+.kh-copy{font-size:23px; color:var(--muted); line-height:1.55; text-wrap:pretty}
+.kh-copy b{color:var(--text); font-weight:600}
+.custody{display:flex; gap:20px; align-items:flex-start; background:var(--panel);
+  border:1px solid var(--line); border-radius:14px; padding:26px 28px}
+.custody svg{flex:0 0 auto; color:var(--accent); margin-top:4px}
+.custody p{font-size:21px; color:var(--muted); line-height:1.5; text-wrap:pretty}
+.custody b{color:var(--text); font-weight:600}
+.surface-list{background:var(--panel); border:1px solid var(--line); border-radius:14px; overflow:hidden}
+.surface-row{display:flex; align-items:baseline; gap:24px; padding:15px 26px;
+  border-bottom:1px solid var(--line); font-size:19px}
+.surface-row:last-child{border-bottom:none}
+.surface-row code{flex:0 0 460px; color:var(--text); font-size:18px}
+.surface-row span{color:var(--muted)}
+
+/* ═══════════ slide 9 — benchmark ═══════════ */
+.statband{display:grid; grid-template-columns:repeat(4,1fr); gap:22px; margin-top:44px}
+.stat{background:linear-gradient(180deg,var(--panel2),var(--panel)); border:1px solid var(--line);
+  border-radius:16px; padding:28px 20px; text-align:center}
+.stat-v{display:block; font:700 52px/1 var(--font-mono); letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums}
+.stat-v .unit{font-size:.55em; color:var(--muted); font-weight:500}
+.stat-l{display:block; color:var(--muted); font-size:19px; margin-top:12px; line-height:1.4}
+.chart-frame{position:relative; height:300px; border:1px solid var(--line); border-radius:14px;
+  background:var(--panel); padding:18px 18px 14px; overflow:hidden; margin-top:34px}
+.bars{display:flex; align-items:flex-end; gap:8px; height:100%}
+.bars a{flex:1 1 0; min-width:8px; background:var(--accent); opacity:.75; border-radius:5px 5px 0 0}
+.bars a:hover{opacity:1}
+.bars a.slow{background:var(--warn)}
+.refline{position:absolute; left:0; right:0; border-top:2px dashed var(--line); pointer-events:none}
+.refline span{position:absolute; right:12px; top:-26px; font:700 16px/1 var(--font-mono);
+  color:var(--muted); background:var(--panel); padding:2px 8px; font-variant-numeric:tabular-nums}
+.chart-cap{font-size:19px; color:var(--muted); margin-top:18px; text-wrap:pretty}
+.chart-cap b{color:var(--text); font-weight:600}
+.bench-foot{display:flex; gap:16px 54px; flex-wrap:wrap; margin-top:26px;
+  font:20px/1.4 var(--font-mono); color:var(--muted); font-variant-numeric:tabular-nums}
+.bench-foot b{color:var(--text); font-weight:700}
+
+/* ═══════════ slide 10 — limits ═══════════ */
+.limits-grid{display:grid; grid-template-columns:1fr 1fr; gap:30px 60px; margin-top:52px}
+.limit{position:relative; padding:6px 0 6px 74px}
+.limit::before{content:attr(data-n); position:absolute; left:0; top:8px;
+  font:700 24px/1 var(--font-mono); color:var(--warn); letter-spacing:.02em;
+  font-variant-numeric:tabular-nums}
+.limit h3{font-size:26px; margin-bottom:10px; letter-spacing:-.01em}
+.limit p{font-size:20px; color:var(--muted); line-height:1.5; text-wrap:pretty}
+.limit code{font-size:.92em; background:var(--panel2); border:1px solid var(--line);
+  border-radius:6px; padding:.05em .4em; white-space:nowrap}
+
+/* ═══════════ slide 11 — the ask ═══════════ */
+.ask{flex-direction:row; gap:90px; align-items:center}
+.ask .col-l{flex:1 1 60%; min-width:0}
+.ask .col-r{flex:1 1 40%; min-width:0; display:flex; flex-direction:column; gap:36px; align-items:center}
+.codeblock{background:var(--panel); border:1px solid var(--line); border-radius:14px;
+  padding:26px 30px; margin-top:40px; font:19px/1.75 var(--font-mono); overflow:hidden}
+.codeblock .str{color:var(--ok)}
+.codeblock .cmt{color:var(--muted)}
+.expected{font-size:20px; color:var(--muted); margin-top:18px}
+.expected code{color:var(--ok); font-weight:700; background:var(--panel2);
+  border:1px solid var(--line); border-radius:6px; padding:.05em .45em}
+.ask-links{display:flex; gap:14px 44px; flex-wrap:wrap; margin-top:38px;
+  font:19px/1.5 var(--font-mono)}
+.ask-links span{color:var(--muted)}
+.qr-ph{width:280px; height:280px; border:2px dashed var(--line); border-radius:16px;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px;
+  color:var(--muted); font:17px/1.4 var(--font-mono); text-align:center; padding:20px}
+.qr-ph svg{opacity:.5}
+.closer{font-size:33px; line-height:1.35; text-align:center; text-wrap:balance; max-width:480px}
+.closer b{color:var(--ok); font-weight:700}
+
+/* ═══════════ reduced motion ═══════════ */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation:none !important; transition:none !important}
+}
+
+/* ═══════════ print — one slide per page ═══════════ */
+@page{size:16in 9in landscape; margin:0}
+@media print{
+  html,body,.slide{-webkit-print-color-adjust:exact; print-color-adjust:exact}
+  body{background:var(--bg); overflow:visible}
+  .viewport{position:static; display:block}
+  .stage{transform:none !important; position:static; width:auto; height:auto;
+    overflow:visible; display:block; padding:0}
+  .slide{display:flex !important; position:relative; inset:auto;
+    width:1920px; height:1080px; zoom:.8; /* 1920×.8 = 1536px = 16in @96dpi */
+    transform:none; margin:0; outline:none; border-radius:0;
+    page-break-after:always; page-break-inside:avoid; break-inside:avoid; animation:none}
+  .hud,.progress,.notes-panel{display:none !important}
+  .caret{animation:none; opacity:1}
+}
+</style>
+</head>
+<body>
+
+<div class="viewport">
+<div class="stage" id="stage">
+
+  <!-- ═══════════════ 1 · COVER ═══════════════ -->
+  <section class="slide cover" data-title="Cover" aria-label="Slide 1: cover">
+    <div class="cover-left">
+      <p class="badge"><i aria-hidden="true"></i>Built for Agents Onchain — KeeperHub &times; DoraHacks</p>
+      <h1>Revoker</h1>
+      <p class="tagline">Lands the revoke <b>before the drainer moves</b>.</p>
+      <p class="cover-term mono"><span class="ps1">$</span>revoker watch<span class="caret" aria-hidden="true"></span></p>
+      <p class="cover-meta">TypeScript &middot; Solidity 0.8.28 + Foundry &middot; viem &middot; KeeperHub &middot; Ethereum Sepolia</p>
+    </div>
+    <!-- the severed zero: the allowance ring cut by the revoke stroke -->
+    <svg class="cover-mark" viewBox="0 0 512 512" role="img" aria-label="Revoker mark: an allowance ring severed to zero by the revoke stroke">
+      <defs><mask id="sv1"><rect width="512" height="512" fill="#fff"/><line x1="132" y1="380" x2="380" y2="132" stroke="#000" stroke-width="104" stroke-linecap="round"/></mask></defs>
+      <circle cx="256" cy="256" r="140" fill="none" stroke="var(--accent)" stroke-width="60" mask="url(#sv1)"/>
+      <line x1="132" y1="380" x2="380" y2="132" stroke="var(--text)" stroke-width="46" stroke-linecap="round"/>
+    </svg>
+    <aside class="speaker-notes">Revoker is an autonomous on-chain security agent. One sentence: when a token approval turns dangerous, it revokes it through KeeperHub before a human could even read the alert. Everything in this deck happened on Ethereum Sepolia, and every number is a transaction you can open.</aside>
+  </section>
+
+  <!-- ═══════════════ 2 · HOOK ═══════════════ -->
+  <section class="slide hook" data-title="The hook" aria-label="Slide 2: hook">
+    <p class="eyebrow">The most common wallet-drain vector</p>
+    <p class="bigcode mono"><span class="fn">approve(</span>spender, <span class="max">MAX_UINT256</span><span class="fn">)</span></p>
+    <p class="after">You signed it once, months ago. It never expires — and the day that
+      contract turns malicious, <b>the allowance is still live</b>.</p>
+    <aside class="speaker-notes">Ask the room: who here has clicked "approve unlimited" to save gas? That signature never expires. Months later the spender contract turns malicious — and the allowance you forgot is still armed. This single line of calldata is the most common way wallets get drained.</aside>
+  </section>
+
+  <!-- ═══════════════ 3 · PROBLEM ═══════════════ -->
+  <section class="slide split" data-title="The problem" aria-label="Slide 3: problem">
+    <div class="col-l">
+      <p class="eyebrow">The problem</p>
+      <h2>Every tool stops at the alert.</h2>
+      <p class="lede">Approval checkers are read-only: they rate the risk, list the allowance —
+        and leave the acting to you. For a wallet holder with forgotten approvals, or a
+        <b>DAO treasury signer asleep at 3&nbsp;a.m.</b>, an alert is not protection.</p>
+    </div>
+    <div class="col-r">
+      <div class="alert-mock panel">
+        <div class="am-head">
+          <svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3L2 21h20L12 3z" fill="none" stroke="var(--danger)" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 10v5" stroke="var(--danger)" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="18" r="1.1" fill="var(--danger)"/></svg>
+          <span class="am-title">APPROVAL RISK — HIGH</span>
+        </div>
+        <p>A spender you approved has been flagged. Your allowance is unlimited.</p>
+        <p class="am-meta">allowance = MAX_UINT256 &middot; granted 214 days ago</p>
+        <span class="am-btn">Acknowledge</span>
+      </div>
+      <p class="mock-caption">The state of the art ends here — <b>a notification</b>,
+        and a button that does nothing on-chain.</p>
+    </div>
+    <aside class="speaker-notes">The entire industry answer today is a dashboard and a push notification. Detection without execution is not protection: by the time a human wakes up, reads the alert, opens a wallet and signs, the drain has cleared. That gap between knowing and acting is the product.</aside>
+  </section>
+
+  <!-- ═══════════════ 4 · SOLUTION ═══════════════ -->
+  <section class="slide" data-title="The solution" aria-label="Slide 4: solution">
+    <p class="eyebrow">The solution</p>
+    <h2>Revoker acts.</h2>
+    <p class="lede">An autonomous agent that watches a wallet&rsquo;s live approval set and executes
+      <code>approve(spender,&nbsp;0)</code> through KeeperHub the instant a threat rule fires —
+      <b>no human in the loop</b>.</p>
+    <div class="term">
+      <div class="term-bar"><i></i><i></i><i></i><span class="term-title">revoker — watch &middot; Ethereum Sepolia</span></div>
+      <div class="term-body">
+        <div><span class="ps1">$</span> revoker watch</div>
+        <div><span class="t-mut">watching 0x5E2e&hellip;bab7 &middot; 3 rules armed &middot; signer: Turnkey enclave via KeeperHub</span></div>
+        <div><span class="t-danger">[detect]</span>&nbsp; MockUSDC approval &rarr; 0x8eBf&hellip;892e &middot; allowance = <b>MAX_UINT256</b></div>
+        <div><span class="t-danger">[rule]</span>&nbsp;&nbsp;&nbsp; unlimited-to-unverified — <b>FIRED</b> <span class="t-mut">(spender source unverified)</span></div>
+        <div><span class="t-danger">[rule]</span>&nbsp;&nbsp;&nbsp; denylisted — <b>FIRED</b> <span class="t-mut">(known-bad spender)</span></div>
+        <div><span class="t-warn">[execute]</span> KeeperHub check-and-execute &rarr; approve(spender, 0)</div>
+        <div><span class="t-ok">[confirm]</span> 0x325f6d51&hellip;7e09f9 &middot; allowance = <b>0</b> &middot; sponsored &middot; <span class="t-mut">no human involved</span></div>
+      </div>
+    </div>
+    <aside class="speaker-notes">So we built the missing half: execution. Revoker watches the approval set; the moment a rule fires it calls approve-zero through KeeperHub. No confirmation dialog, no human. This terminal shows the exact run you're about to see proven on-chain — those rule names and that transaction hash are real.</aside>
+  </section>
+
+  <!-- ═══════════════ 5 · DEMO — the three transactions ═══════════════ -->
+  <section class="slide" data-title="Demo — a real drain, stopped" aria-label="Slide 5: demo, the three transactions">
+    <p class="eyebrow">Proof of execution &middot; Ethereum Sepolia</p>
+    <h2>A real drain, really stopped.</h2>
+    <div class="demo-grid">
+      <div class="proof-col">
+        <div class="proof-row is-danger">
+          <span class="pnum" aria-hidden="true">1</span>
+          <div class="proof-body">
+            <span class="tag danger">The trap</span>
+            <h3>Victim grants unlimited approval</h3>
+            <p class="p-desc"><code>approve(spender, MAX_UINT256)</code> to the drainer contract.</p>
+            <div class="proof-meta">
+              <a class="tx" href="https://sepolia.etherscan.io/tx/0xfe39a5f42d4967548751989c98b0a35971273752e009d90d70c3430d09017482" rel="noopener">0xfe39a5f4&hellip;017482</a>
+              <span class="p-result">allowance = <b>1.157e77</b></span>
+            </div>
+          </div>
+        </div>
+        <div class="proof-row is-warn">
+          <span class="pnum" aria-hidden="true">2</span>
+          <div class="proof-body">
+            <span class="tag warn">The response</span>
+            <h3>Revoker fires — no human involved</h3>
+            <p class="p-desc"><code>approve(spender, 0)</code> via KeeperHub <code>check-and-execute</code>.</p>
+            <div class="proof-meta">
+              <a class="tx" href="https://sepolia.etherscan.io/tx/0x325f6d51be89243ed26e8bceba973d41a7a9657addab6d1395210ddfbc7e09f9" rel="noopener">0x325f6d51&hellip;7e09f9</a>
+              <span class="p-result ok">allowance = <b>0</b></span>
+            </div>
+          </div>
+        </div>
+        <div class="proof-row is-ok">
+          <span class="pnum" aria-hidden="true">3</span>
+          <div class="proof-body">
+            <span class="tag ok">The verdict</span>
+            <h3>The drainer fires anyway</h3>
+            <p class="p-desc">The drain tx <b>succeeded</b> — it just found nothing left to take.</p>
+            <div class="proof-meta">
+              <a class="tx" href="https://sepolia.etherscan.io/tx/0xe127f3d2e2eb20a9825fbec63c56028815ce145c8cdd9e143a02600e2da1a303" rel="noopener">0xe127f3d2&hellip;a1a303</a>
+              <span class="p-result ok">drained: <b>0</b></span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="kick-col">
+        <div class="kicker">
+          <p class="k-line">We let the drain contract fire <b>after</b> the revoke.
+            It succeeded — and</p>
+          <p class="k-big">took 0</p>
+          <p class="k-sub">balance unchanged: <b>10,000 mUSDC</b><br>across the whole sequence</p>
+        </div>
+        <!-- SWAP: demo video — when published, replace this chip with the video link/embed.
+             No URL exists yet; do not invent one. -->
+        <div class="video-chip">
+          <svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 8.5v7l6-3.5z" fill="currentColor"/></svg>
+          <span><b>Demo video — not yet published.</b> The recorded run of this exact cycle
+            will link here.</span>
+        </div>
+      </div>
+    </div>
+    <aside class="speaker-notes">Three real transactions, in order. We armed a real trap, Revoker killed the allowance in one autonomous cycle — and then, this is the part I love, we let the drainer fire anyway. It succeeded. It took zero. The proof isn't that the attack was blocked; it's that it hit an empty room. Open any of these hashes right now.</aside>
+  </section>
+
+  <!-- ═══════════════ 6 · HOW IT WORKS ═══════════════ -->
+  <section class="slide" data-title="How it works" aria-label="Slide 6: architecture">
+    <p class="eyebrow">How it works</p>
+    <h2>One loop. No human.</h2>
+    <svg class="arch" viewBox="0 0 1660 560" role="img" aria-label="Architecture: wallet approval state on Sepolia is polled by the Revoker agent, whose three rules trigger a KeeperHub check-and-execute — allowance re-read and revoke in one atomic operation, signed inside a Turnkey enclave — landing the revoke back on Sepolia; both agent and KeeperHub feed an audit trail into the local verify dashboard.">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0L10 5L0 10z" fill="var(--accent)"/>
+        </marker>
+      </defs>
+      <!-- A · wallet state -->
+      <rect class="n-box" x="20" y="180" width="290" height="180" rx="14"/>
+      <text class="n-title" x="46" y="228">Wallet approval state</text>
+      <text class="n-sub" x="46" y="262">Ethereum Sepolia</text>
+      <text class="n-sub" x="46" y="290">approvals &middot; balances &middot; code</text>
+      <text class="n-sub" x="46" y="332">watched: 0x5E2e&#8230;bab7</text>
+      <!-- A → B -->
+      <line class="edge" x1="310" y1="268" x2="376" y2="268" marker-end="url(#arr)"/>
+      <text class="edge-label" x="343" y="248" text-anchor="middle">poll</text>
+      <!-- B · agent -->
+      <rect class="n-box" x="380" y="105" width="400" height="330" rx="14"/>
+      <text class="n-title" x="406" y="153">Revoker agent</text>
+      <rect class="n-chip" x="404" y="178" width="352" height="52" rx="9"/>
+      <text class="n-chip-t" x="424" y="211">watcher <tspan>— live approval set</tspan></text>
+      <rect class="n-chip" x="404" y="244" width="352" height="52" rx="9"/>
+      <text class="n-chip-t" x="424" y="277">rules <tspan>— 3 auditable checks</tspan></text>
+      <rect class="n-chip" x="404" y="310" width="352" height="52" rx="9"/>
+      <text class="n-chip-t" x="424" y="343">planner <tspan>— approve(spender, 0)</tspan></text>
+      <text class="n-sub" x="406" y="408">TypeScript &middot; viem &middot; holds no key</text>
+      <!-- B → C -->
+      <line class="edge" x1="780" y1="268" x2="876" y2="268" marker-end="url(#arr)"/>
+      <text class="edge-label" x="828" y="248" text-anchor="middle">execute</text>
+      <!-- C · keeperhub -->
+      <rect class="n-box" x="880" y="70" width="430" height="400" rx="14"/>
+      <text class="n-title" x="906" y="118">KeeperHub</text>
+      <rect class="atomic-r" x="904" y="142" width="382" height="186" rx="11"/>
+      <text class="atomic-t" x="926" y="172">ONE ATOMIC OPERATION</text>
+      <rect class="n-chip" x="926" y="186" width="338" height="46" rx="8"/>
+      <text class="n-chip-t" x="944" y="216">re-read allowance <tspan>— live chain</tspan></text>
+      <text class="arrow-ok" x="1095" y="252" text-anchor="middle">&#8595;</text>
+      <rect class="n-chip" x="926" y="262" width="338" height="46" rx="8"/>
+      <text class="n-chip-t" x="944" y="292">execute approve(spender, 0)</text>
+      <rect class="n-chip" x="904" y="352" width="184" height="52" rx="9"/>
+      <text class="n-chip-t" x="922" y="385">Turnkey enclave</text>
+      <rect class="n-chip" x="1102" y="352" width="184" height="52" rx="9"/>
+      <text class="n-chip-t" x="1120" y="385">sponsored relay</text>
+      <text class="n-sub" x="906" y="444">signing never leaves the enclave</text>
+      <!-- C → D -->
+      <line class="edge" x1="1310" y1="268" x2="1386" y2="268" marker-end="url(#arr)"/>
+      <text class="edge-label" x="1348" y="248" text-anchor="middle">tx</text>
+      <!-- D · the revoke lands -->
+      <rect class="n-box" x="1390" y="180" width="250" height="180" rx="14"/>
+      <text class="n-title" x="1416" y="228">The revoke lands</text>
+      <text class="n-sub" x="1416" y="262">Ethereum Sepolia</text>
+      <text class="n-sub" x="1416" y="296">allowance &#8594; 0</text>
+      <text class="n-sub" x="1416" y="324">gas 46,482 (p50)</text>
+      <!-- audit trail strip -->
+      <line class="edge-dash" x1="570" y1="435" x2="570" y2="486"/>
+      <line class="edge-dash" x1="1095" y1="470" x2="1095" y2="486"/>
+      <rect class="n-box" x="380" y="490" width="930" height="58" rx="12"/>
+      <text class="n-sub" x="845" y="526" text-anchor="middle">audit trail — execution id &middot; status &middot; gas &middot; sponsorship &#8594; local /verify dashboard (SSE)</text>
+    </svg>
+    <aside class="speaker-notes">The whole system is one loop: read the chain, evaluate three auditable rules — no ML, every firing carries its evidence — and hand execution to KeeperHub. Note what the agent never touches: a private key. Signing happens inside a Turnkey enclave, and every execution lands in an audit trail you can watch live on the local dashboard.</aside>
+  </section>
+
+  <!-- ═══════════════ 7 · THE RACE ═══════════════ -->
+  <section class="slide" data-title="Nothing to front-run" aria-label="Slide 7: why the revoke cannot be front-run">
+    <p class="eyebrow">The sharpest technical idea</p>
+    <h2>Nothing to front-run.</h2>
+    <div class="race">
+      <div class="race-col bad">
+        <h3>read-then-write <span class="who">a typical agent</span></h3>
+        <div class="race-body">
+          <div class="op"><span class="op-n" aria-hidden="true">1</span>read allowance<span class="op-out">&rarr; 1.157e77</span></div>
+          <div class="race-gap">
+            <span class="gap-label">front-run window</span>
+            A mempool-watching drainer slips a <code>transferFrom</code> in here —
+            before the revoke lands.
+          </div>
+          <div class="op"><span class="op-n" aria-hidden="true">2</span>approve(spender, 0)</div>
+        </div>
+        <div class="verdict bad">Decides at time T, acts at T+n. The window <em>is</em> the attack surface.</div>
+      </div>
+      <div class="race-col good">
+        <h3>check-and-execute <span class="who">Revoker, via KeeperHub</span></h3>
+        <div class="race-body">
+          <div class="atomic-box">
+            <div class="op"><span class="op-n" aria-hidden="true">1</span>read allowance<span class="op-out">live chain state</span></div>
+            <div class="atomic-arrow" aria-hidden="true">&darr;</div>
+            <div class="op"><span class="op-n" aria-hidden="true">2</span>approve(spender, 0)</div>
+            <span class="atomic-tag">one atomic server-side operation</span>
+          </div>
+        </div>
+        <div class="verdict good">Same two steps, no gap between them. Nothing to front-run.</div>
+      </div>
+    </div>
+    <div class="observed">
+      <span>KeeperHub&rsquo;s receipt from the reference run — the condition re-read server-side at execution time:</span>
+      <span class="obs-pre">observedValue: 115792089237316195423570985008687907853269984665640564039457584007913129639935</span>
+      <span class="obs-eq">= 2<sup>256</sup> &minus; 1 — <b>MAX_UINT256</b>, read from the live chain, not passed in by this process.</span>
+    </div>
+    <aside class="speaker-notes">This is why the proof you just saw wasn't luck. A read-then-write agent decides at time T and acts at T-plus-n — a mempool watcher can beat it inside that gap. With check-and-execute, KeeperHub re-reads the allowance and executes the revoke in one server-side atomic operation. The 78-digit observedValue is the receipt: MAX_UINT256, re-read at execution time.</aside>
+  </section>
+
+  <!-- ═══════════════ 8 · KEEPERHUB ═══════════════ -->
+  <section class="slide" data-title="KeeperHub is the engine" aria-label="Slide 8: KeeperHub integration depth">
+    <p class="eyebrow">Integration depth</p>
+    <h2>KeeperHub is the engine.</h2>
+    <div class="kh-grid">
+      <div class="kh-left">
+        <div class="mini-stats">
+          <span class="mini-stat"><b>10</b> API surfaces</span>
+          <span class="mini-stat"><b>12</b> call sites</span>
+          <span class="mini-stat"><b>3</b> threat rules</span>
+        </div>
+        <p class="kh-copy">Remove KeeperHub and Revoker needs seven separate systems — relayer,
+          gas oracle, MEV-protected route, confirmation poller, action discovery, ABI resolution,
+          audit pipeline — <b>plus custody</b>. The atomic <code class="mono">check-and-execute</code>
+          and the enclave-held key are the two a standalone script cannot honestly replicate.</p>
+        <div class="custody">
+          <svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 10V7a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="15" r="1.6" fill="currentColor"/></svg>
+          <p><b>No key to steal.</b> Signing happens inside a Turnkey enclave via KeeperHub —
+            the agent process never holds a private key.</p>
+        </div>
+      </div>
+      <div class="kh-right">
+        <div class="surface-list">
+          <div class="surface-row"><code>POST /execute/check-and-execute</code><span>the atomic revoke</span></div>
+          <div class="surface-row"><code>POST /execute/contract-call</code><span>contract writes</span></div>
+          <div class="surface-row"><code>POST /execute/transfer</code><span>native transfers</span></div>
+          <div class="surface-row"><code>GET&nbsp; /execute/{id}/status</code><span>confirmation &middot; gas &middot; audit record</span></div>
+          <div class="surface-row"><code>GET&nbsp; /chains</code><span>network + explorer resolution</span></div>
+          <div class="surface-row"><code>GET&nbsp; /chains/{id}/abi</code><span>source-verification signal, rule 1</span></div>
+          <div class="surface-row"><code>GET&nbsp; /user/wallet</code><span>signer identity assertion</span></div>
+          <div class="surface-row"><code>GET&nbsp; /user/wallet/balances</code><span>token discovery</span></div>
+          <div class="surface-row"><code>simulate: true</code><span>pre-flight dry runs</span></div>
+          <div class="surface-row"><code>Idempotency-Key</code><span>safe retries, no double-execution</span></div>
+        </div>
+      </div>
+    </div>
+    <aside class="speaker-notes">Your rubric asks how deeply KeeperHub is used, so here is the audit: ten distinct surfaces across twelve call sites — execution, status, chains, ABI, wallet, simulation, idempotent retries. Remove it and we would need seven separate systems plus custody. Check-and-execute and the enclave key are the two pieces we could not honestly rebuild ourselves.</aside>
+  </section>
+
+  <!-- ═══════════════ 9 · BENCHMARK ═══════════════ -->
+  <section class="slide" data-title="Measured, not claimed" aria-label="Slide 9: benchmark">
+    <p class="eyebrow">Reliability &middot; 25 full cycles against live Sepolia</p>
+    <h2>Measured, not claimed.</h2>
+    <div class="statband">
+      <div class="stat"><span class="stat-v">12.95<span class="unit">s</span></span><span class="stat-l">median detect &rarr; revoke</span></div>
+      <div class="stat"><span class="stat-v">24.88<span class="unit">s</span></span><span class="stat-l">p95</span></div>
+      <div class="stat"><span class="stat-v">25<span class="unit">/25</span></span><span class="stat-l">cycles succeeded</span></div>
+      <div class="stat"><span class="stat-v">46,482</span><span class="stat-l">gas per revoke (p50 = p95)</span></div>
+    </div>
+    <div class="chart-frame" id="chart-frame">
+      <div class="bars" id="bars" role="img" aria-label="Response time per benchmark cycle; each bar links to its transaction on Etherscan. Cycles 10 to 13 hit a slow block-inclusion window."></div>
+    </div>
+    <p class="chart-cap">Every bar is a real transaction. Cycles 10&ndash;13 hit a slow
+      block-inclusion window (amber) — <b>the network&rsquo;s variance, reported as a distribution</b>,
+      not hidden behind an average.</p>
+    <div class="bench-foot">
+      <span><b>86</b> tests — 44 TypeScript &middot; 42 Solidity</span>
+      <span><b>100%</b> Solidity coverage — lines &middot; statements &middot; branches &middot; functions</span>
+    </div>
+    <aside class="speaker-notes">Reliability, measured: twenty-five out of twenty-five cycles, 12.95 seconds median, gas identical at the p50 and p95. The amber bars are four consecutive cycles that hit a slow block window — that's the network, and we report the distribution instead of averaging it away. Behind it: 86 tests and 100 percent Solidity coverage on every axis.</aside>
+  </section>
+
+  <!-- ═══════════════ 10 · LIMITS ═══════════════ -->
+  <section class="slide" data-title="Known limits" aria-label="Slide 10: known limits">
+    <p class="eyebrow">Scope &middot; stated plainly</p>
+    <h2>Known limits, on the record.</h2>
+    <p class="lede">A security tool that hides its blind spots is part of the problem.
+      These are Revoker&rsquo;s.</p>
+    <div class="limits-grid">
+      <div class="limit" data-n="01">
+        <h3>Sepolia testnet only</h3>
+        <p>The mainnet path is documented, not executed. No real funds were risked
+          producing any number in this deck.</p>
+      </div>
+      <div class="limit" data-n="02">
+        <h3>Token discovery is watchlist-scoped</h3>
+        <p>No public RPC serves an address-less <code>eth_getLogs</code> over a useful range.
+          Revoker protects the tokens it is told to watch — not coverage it doesn&rsquo;t have.</p>
+      </div>
+      <div class="limit" data-n="03">
+        <h3><code>young-spender</code> abstains loudly</h3>
+        <p>Without an archive RPC it returns <code>INDETERMINATE</code> and names the remedy —
+          instead of silently reporting &ldquo;safe&rdquo;.</p>
+      </div>
+      <div class="limit" data-n="04">
+        <h3>The threat model is narrow on purpose</h3>
+        <p>A spender that is verified, aged, and off the deny-list trips nothing.
+          That case is out of scope, not silently mishandled.</p>
+      </div>
+    </div>
+    <aside class="speaker-notes">We would rather tell you the limits than have you find them. Testnet only. Discovery is watchlist-scoped because no public RPC can enumerate approvals honestly. The young-spender rule abstains loudly when it can't see instead of rubber-stamping. And the threat model is deliberately narrow — an agent that moves funds should only act on rules it can defend.</aside>
+  </section>
+
+  <!-- ═══════════════ 11 · THE ASK ═══════════════ -->
+  <section class="slide ask" data-title="The ask" aria-label="Slide 11: the ask">
+    <div class="col-l">
+      <p class="eyebrow">The ask</p>
+      <h2>Open the receipts.</h2>
+      <p class="lede">Judge Revoker on execution — <b>that is the point</b>. Every number in this
+        deck is a Sepolia transaction; the allowance we zeroed is still zero, and one
+        <code>cast</code> call proves it.</p>
+      <div class="codeblock">
+        <div><span class="cmt"># no credentials, no account, no trust in this deck required</span></div>
+        <div>cast call 0x4facb5FD1682c4449cAD42b7590861f7eD5c88Cb \</div>
+        <div>&nbsp;&nbsp;<span class="str">"allowance(address,address)(uint256)"</span> \</div>
+        <div>&nbsp;&nbsp;0x5E2e5Fd3aD7fDC9B94482930db8b5F45E439bab7 \</div>
+        <div>&nbsp;&nbsp;0x8eBf8540EdE8e40CD94825C418758d4029D8892e \</div>
+        <div>&nbsp;&nbsp;--rpc-url https://ethereum-sepolia-rpc.publicnode.com</div>
+      </div>
+      <p class="expected">Expected output: <code>0</code></p>
+      <div class="ask-links">
+        <span><a href="https://github.com/edycutjong/revoker" rel="noopener">github.com/edycutjong/revoker</a> &middot; public before judging</span>
+        <span><a href="https://dorahacks.io/hackathon/agents-onchain" rel="noopener">dorahacks.io/hackathon/agents-onchain</a></span>
+      </div>
+    </div>
+    <div class="col-r">
+      <!-- SWAP: replace this placeholder with a real QR code (inline SVG) pointing at the repo -->
+      <div class="qr-ph">
+        <svg width="54" height="54" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M14 14h3v3h-3zM18 18h3v3h-3z" fill="currentColor"/></svg>
+        <span>QR &rarr; repo<br>(swap in when generated)</span>
+      </div>
+      <p class="closer">The drainer fired.<br>It found <b>an empty room</b>.</p>
+    </div>
+    <aside class="speaker-notes">Don't take the deck's word for any of it. Run the cast call — the allowance Revoker zeroed is still zero, on a public RPC, right now. Every bar and every number links to a transaction. The drainer fired, exactly as its author intended — and it found an empty room. That's what execution looks like.</aside>
+  </section>
+
+</div><!-- /stage -->
+</div><!-- /viewport -->
+
+<div class="hud counter" id="counter" aria-hidden="true">01 / 11</div>
+<div class="hud hint" id="hint" aria-hidden="true">&larr; &rarr; navigate &middot; ESC overview &middot; P presenter &middot; C contrast</div>
+<div class="progress" aria-hidden="true"><i id="progressbar"></i></div>
+<div class="notes-panel" id="notes" aria-live="polite">
+  <div class="np-label">Speaker notes</div>
+  <div class="np-cur" id="np-cur"></div>
+  <div class="np-next" id="np-next"></div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var N = slides.length;
+  var stage = document.getElementById('stage');
+  var counter = document.getElementById('counter');
+  var progress = document.getElementById('progressbar');
+  var hint = document.getElementById('hint');
+  var npCur = document.getElementById('np-cur');
+  var npNext = document.getElementById('np-next');
+  var idx = 0, navigated = false;
+
+  /* ---------- benchmark chart: real per-cycle data from BENCHMARK.md ---------- */
+  var CYCLES = [
+    [12.06,'0x77f6e43f9a701c52a4a0472a719be6307e4f760e9d03b7d54f615da25856dbf9'],
+    [12.47,'0x5f7bba9dc09d0bf99be82e5d7a905d330ea50e33b7c6cd94ba095a8de46dc25f'],
+    [11.91,'0xf7a3a9cd28bbc62b111b7bc5c53a718b8fb664803b695a9a567a31ff5910765d'],
+    [13.60,'0x2ab6e0c9493f241ca66a198ca885ae7fe7b493064c34a8c0dd4c832c0972f5db'],
+    [12.40,'0x35a469b8b8a2e8256acb4da9c834e67b8ef97275fb395b5b1faedda26f9ede96'],
+    [10.33,'0xebc4b3285721123ccd84d426a55f0a4094cab117781a57e1453af016fc48a065'],
+    [13.41,'0x72167a29f8f5fd5e4093c1e6d5b28372717bd2ad12d0f46b93a08ed5692ed7f4'],
+    [12.59,'0x368586b9188b2c264c8fe3379f174d507fba2951799033f259cd63fa35bcd712'],
+    [13.27,'0x4a5962c0ce9bdb36732c205000ec6c62f1ff31f3e1df469cd68126ede7e52912'],
+    [24.95,'0xd831c52d270f53fc0c2b8de7a7c31850fb83c29e8c1b4b1e28bd938ede6b8be5'],
+    [22.60,'0x5f9b3ad9021d8f486a2b25bafc37aba9fc26480c52ff6587575241b4324ed774'],
+    [23.48,'0x626d893f26de7512e54d5db913ab6941205e76d9c1b8861b91d1af73efc6478b'],
+    [24.88,'0x66ded1b5548c0cb46c531577ed1a0cc873a24f28380646f23d12b2ddb3864829'],
+    [12.95,'0xbb3d8c34b5dc10b8df1d707316b821274e3862327a616b86d0fa15149d1acdde'],
+    [12.86,'0xafc93446a6a003b7442ba617b82056b1604a63aa1ff7c8e122a2f9b699ddcffb'],
+    [12.77,'0x7bd1b54d4d00ffb9659bdb6c6e8347c85837ba78507beba6289e703d8bf62cfd'],
+    [12.74,'0xf65640d824434ccc491cd51a3825259a3825ccb86c6115075066fbf33669d75b'],
+    [13.60,'0x0f628f80aa686cc0390a0ef4ba06fd1ba8531f7616e2acc37b690ad5303f0393'],
+    [12.71,'0xd8769ad2319528bc7157964b289d80b382c62814447c5e4e6a35177e4a646475'],
+    [12.82,'0x12eb7240c2f7a6c76a5b26fb2c928b79caf0cb7865031c154e36fe8a66483e6c'],
+    [12.63,'0x9b01908d6c60332d5492d614b1bb0a62ee119e60bf058ff1fa0c89035c64f5fd'],
+    [13.62,'0x68a3be305e911322f5b3275a7cc8eacccb8a408dbc646384fd5d236180f878d8'],
+    [13.33,'0x7fba3a082c7ed7b5fb6cf6bafff1e8e4c05fccbc925e517ea3008806e03bcf6e'],
+    [13.40,'0xfe63a209b9d8a1615525eb6c71a79b4539d6099f5c7bc2657412230bb87e23fa'],
+    [13.72,'0xd07984bc414c3eda85230ab80893ebf1e7c7f04996b23393c78045e0027204fc']
+  ];
+  var MAX = 25.28;
+  var bars = document.getElementById('bars');
+  if (bars) {
+    var frame = document.getElementById('chart-frame');
+    /* frame is 300px with 18px top / 14px bottom padding → plot area 268px,
+       so a value v sits at bottom: (14 + v/MAX*268) / 300 of the frame */
+    [[12.95, 'p50 12.95s', false], [24.88, 'p95 24.88s', true]].forEach(function (r) {
+      var line = document.createElement('div');
+      line.className = 'refline';
+      line.style.bottom = ((14 + r[0] / MAX * 268) / 300 * 100).toFixed(1) + '%';
+      var lbl = document.createElement('span');
+      lbl.textContent = r[1];
+      if (r[2]) lbl.style.top = '6px'; /* p95 label below its line so it isn't clipped */
+      line.appendChild(lbl);
+      frame.appendChild(line);
+    });
+    CYCLES.forEach(function (c, i) {
+      var a = document.createElement('a');
+      a.href = 'https://sepolia.etherscan.io/tx/' + c[1];
+      a.rel = 'noopener';
+      a.tabIndex = -1; /* keep the deck's tab order sane; bars are mouse targets */
+      a.style.height = (c[0] / MAX * 100).toFixed(1) + '%';
+      if (c[0] > 20) a.className = 'slow';
+      a.title = 'cycle ' + (i + 1) + ' — ' + c[0].toFixed(2) + 's';
+      a.setAttribute('aria-label', 'Cycle ' + (i + 1) + ': ' + c[0].toFixed(2) +
+        ' seconds response. Opens the transaction on Etherscan.');
+      bars.appendChild(a);
+    });
+  }
+
+  /* ---------- navigation ---------- */
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function go(i, fromHash) {
+    idx = Math.max(0, Math.min(N - 1, i));
+    slides.forEach(function (s, k) { s.classList.toggle('current', k === idx); });
+    counter.textContent = pad(idx + 1) + ' / ' + pad(N);
+    progress.style.width = ((idx + 1) / N * 100).toFixed(1) + '%';
+    if (!fromHash) {
+      try { history.replaceState(null, '', '#' + (idx + 1)); } catch (e) {}
+    }
+    updateNotes();
+    if (navigated && hint) hint.classList.add('gone');
+  }
+  function updateNotes() {
+    var cur = slides[idx].querySelector('.speaker-notes');
+    npCur.textContent = cur ? cur.textContent.trim() : '';
+    if (idx + 1 < N) {
+      npNext.innerHTML = 'Next: <b></b>';
+      npNext.querySelector('b').textContent = slides[idx + 1].getAttribute('data-title') || 'slide ' + (idx + 2);
+    } else {
+      npNext.textContent = 'Last slide.';
+    }
+  }
+
+  /* ---------- scale the fixed 1920×1080 stage to the viewport ---------- */
+  function scale() {
+    var vp = document.querySelector('.viewport');
+    var r = vp.getBoundingClientRect();
+    var s = Math.min(r.width / 1920, r.height / 1080);
+    stage.style.transform = 'translate(-50%,-50%) scale(' + s + ')';
+  }
+  window.addEventListener('resize', scale);
+
+  /* ---------- modes ---------- */
+  function toggleOverview() {
+    document.body.classList.toggle('overview');
+    scale();
+  }
+  function togglePresenter() {
+    document.body.classList.toggle('presenter');
+    scale();
+    resetCursorTimer();
+  }
+
+  /* presenter mode: hide the cursor after 2s idle */
+  var cursorTimer = null;
+  function resetCursorTimer() {
+    document.body.classList.remove('hide-cursor');
+    if (cursorTimer) clearTimeout(cursorTimer);
+    if (document.body.classList.contains('presenter')) {
+      cursorTimer = setTimeout(function () {
+        document.body.classList.add('hide-cursor');
+      }, 2000);
+    }
+  }
+  document.addEventListener('mousemove', resetCursorTimer);
+
+  /* overview: click a slide to jump */
+  slides.forEach(function (s, k) {
+    s.addEventListener('click', function () {
+      if (document.body.classList.contains('overview')) {
+        document.body.classList.remove('overview');
+        go(k);
+        scale();
+      }
+    });
+  });
+
+  /* ---------- keys ---------- */
+  document.addEventListener('keydown', function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    switch (e.key) {
+      case 'ArrowRight': case 'PageDown':
+        navigated = true; go(idx + 1); e.preventDefault(); break;
+      case ' ':
+        navigated = true; go(e.shiftKey ? idx - 1 : idx + 1); e.preventDefault(); break;
+      case 'ArrowLeft': case 'PageUp':
+        navigated = true; go(idx - 1); e.preventDefault(); break;
+      case 'Home': go(0); e.preventDefault(); break;
+      case 'End': go(N - 1); e.preventDefault(); break;
+      case 'Escape': toggleOverview(); break;
+      case 'p': case 'P': togglePresenter(); break;
+      case 'c': case 'C': document.body.classList.toggle('debug-contrast'); break;
+    }
+  });
+
+  /* ---------- init (supports #n deep links) ---------- */
+  var start = parseInt((location.hash || '').replace('#', ''), 10);
+  go(isNaN(start) ? 0 : start - 1, true);
+  scale();
+})();
+</script>
+</body>
+</html>
