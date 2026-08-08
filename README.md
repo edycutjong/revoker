@@ -210,8 +210,8 @@ window would flatter the result.
 
 Neither figure includes polling delay — the benchmark triggers detection
 immediately rather than waiting for the timer, so a deployment polling every
-`pollIntervalMs` adds an average of `pollIntervalMs/2` on top. The p95 is more
-than double the p50 because four consecutive cycles hit a slow block-inclusion
+`pollIntervalMs` adds an average of `pollIntervalMs/2` on top. The p95 is nearly
+double the p50 (1.92x) because four consecutive cycles hit a slow block-inclusion
 window; that variance is the network's, not the agent's, which is exactly why
 this is reported as a distribution instead of a headline number.
 
@@ -369,7 +369,7 @@ contracts/
 - [x] Three auditable threat rules
 - [x] Reproducible seed + p50/p95 benchmark
 - [x] Live SSE dashboard
-- [x] CI, security scanning, 55 tests
+- [x] CI, security scanning, 86 tests (100% contract coverage)
 - [ ] Indexer-backed token discovery, removing the watchlist limit
 - [ ] Mainnet with a policy layer — spending caps, daily revoke ceiling, allow-list escape hatch
 
