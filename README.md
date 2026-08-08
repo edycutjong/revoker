@@ -10,7 +10,7 @@
   <p>
     We let the drain contract fire <strong>after</strong> the revoke.<br/>
     It succeeded, and it took <strong>zero</strong>.<br/>
-    <a href="https://sepolia.etherscan.io/tx/0xe127f3d2e2eb20a9825fbec63c56028815ce145c8cdd9e143a02600e2da1a303">See the transaction</a>.
+    <a href="https://sepolia.etherscan.io/tx/0x5579da9988e6fafecf3d78025382cae291237559f12534560133a843106e1e4d">See the transaction</a>.
   </p>
 
   <br/>
@@ -178,9 +178,9 @@ The full cycle, executed on Sepolia. Every step is a transaction you can open.
 
 | # | Step | Transaction | Result |
 |---|---|---|---|
-| 1 | Victim grants `approve(spender, MAX_UINT256)` | [`0xfe39a5f4…017482`](https://sepolia.etherscan.io/tx/0xfe39a5f42d4967548751989c98b0a35971273752e009d90d70c3430d09017482) | allowance = `1.157e77` |
-| 2 | **Revoker fires `approve(spender, 0)`** via `check-and-execute` | [`0x325f6d51…7e09f9`](https://sepolia.etherscan.io/tx/0x325f6d51be89243ed26e8bceba973d41a7a9657addab6d1395210ddfbc7e09f9) | **allowance = 0** |
-| 3 | Drainer fires anyway | [`0xe127f3d2…a1a303`](https://sepolia.etherscan.io/tx/0xe127f3d2e2eb20a9825fbec63c56028815ce145c8cdd9e143a02600e2da1a303) | **takes 0. Funds intact.** |
+| 1 | Victim grants `approve(spender, MAX_UINT256)` | [`0xeb4243d1…fe1113`](https://sepolia.etherscan.io/tx/0xeb4243d187e95ba606d9ac7d0c6099018238f519753179215a5189bdbafe1113) | allowance = `1.157e77` |
+| 2 | **Revoker fires `approve(spender, 0)`** via `check-and-execute` | [`0x15f0f816…541a82`](https://sepolia.etherscan.io/tx/0x15f0f81626526e7594801d53e6cc3716ea00403b64ca5efac5320203b7541a82) | **allowance = 0** |
+| 3 | Drainer fires anyway | [`0x5579da99…6e1e4d`](https://sepolia.etherscan.io/tx/0x5579da9988e6fafecf3d78025382cae291237559f12534560133a843106e1e4d) | **takes 0. Funds intact.** |
 
 Step 3 is the one that matters. The drain transaction **succeeded** — it did not
 revert, it was not blocked, it ran exactly as its author intended. It simply had

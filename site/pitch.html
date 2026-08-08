@@ -455,7 +455,7 @@ h2{font-size:72px; line-height:1.06}
         <div><span class="t-danger">[rule]</span>&nbsp;&nbsp;&nbsp; unlimited-to-unverified — <b>FIRED</b> <span class="t-mut">(spender source unverified)</span></div>
         <div><span class="t-danger">[rule]</span>&nbsp;&nbsp;&nbsp; denylisted — <b>FIRED</b> <span class="t-mut">(known-bad spender)</span></div>
         <div><span class="t-warn">[execute]</span> KeeperHub check-and-execute &rarr; approve(spender, 0)</div>
-        <div><span class="t-ok">[confirm]</span> 0x325f6d51&hellip;7e09f9 &middot; allowance = <b>0</b> &middot; sponsored &middot; <span class="t-mut">no human involved</span></div>
+        <div><span class="t-ok">[confirm]</span> 0x15f0f816&hellip;541a82 &middot; allowance = <b>0</b> &middot; sponsored &middot; <span class="t-mut">no human involved</span></div>
       </div>
     </div>
     <aside class="speaker-notes">So we built the missing half: execution. Revoker watches the approval set; the moment a rule fires it calls approve-zero through KeeperHub. No confirmation dialog, no human. This terminal shows the exact run you're about to see proven on-chain — those rule names and that transaction hash are real.</aside>
@@ -474,7 +474,7 @@ h2{font-size:72px; line-height:1.06}
             <h3>Victim grants unlimited approval</h3>
             <p class="p-desc"><code>approve(spender, MAX_UINT256)</code> to the drainer contract.</p>
             <div class="proof-meta">
-              <a class="tx" href="https://sepolia.etherscan.io/tx/0xfe39a5f42d4967548751989c98b0a35971273752e009d90d70c3430d09017482" rel="noopener">0xfe39a5f4&hellip;017482</a>
+              <a class="tx" href="https://sepolia.etherscan.io/tx/0xeb4243d187e95ba606d9ac7d0c6099018238f519753179215a5189bdbafe1113" rel="noopener">0xeb4243d1&hellip;fe1113</a>
               <span class="p-result">allowance = <b>1.157e77</b></span>
             </div>
           </div>
@@ -486,7 +486,7 @@ h2{font-size:72px; line-height:1.06}
             <h3>Revoker fires — no human involved</h3>
             <p class="p-desc"><code>approve(spender, 0)</code> via KeeperHub <code>check-and-execute</code>.</p>
             <div class="proof-meta">
-              <a class="tx" href="https://sepolia.etherscan.io/tx/0x325f6d51be89243ed26e8bceba973d41a7a9657addab6d1395210ddfbc7e09f9" rel="noopener">0x325f6d51&hellip;7e09f9</a>
+              <a class="tx" href="https://sepolia.etherscan.io/tx/0x15f0f81626526e7594801d53e6cc3716ea00403b64ca5efac5320203b7541a82" rel="noopener">0x15f0f816&hellip;541a82</a>
               <span class="p-result ok">allowance = <b>0</b></span>
             </div>
           </div>
@@ -498,7 +498,7 @@ h2{font-size:72px; line-height:1.06}
             <h3>The drainer fires anyway</h3>
             <p class="p-desc">The drain tx <b>succeeded</b> — it just found nothing left to take.</p>
             <div class="proof-meta">
-              <a class="tx" href="https://sepolia.etherscan.io/tx/0xe127f3d2e2eb20a9825fbec63c56028815ce145c8cdd9e143a02600e2da1a303" rel="noopener">0xe127f3d2&hellip;a1a303</a>
+              <a class="tx" href="https://sepolia.etherscan.io/tx/0x5579da9988e6fafecf3d78025382cae291237559f12534560133a843106e1e4d" rel="noopener">0x5579da99&hellip;6e1e4d</a>
               <span class="p-result ok">drained: <b>0</b></span>
             </div>
           </div>
