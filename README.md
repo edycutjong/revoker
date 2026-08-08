@@ -1,7 +1,11 @@
 <div align="center">
 
-  <h1>Revoker 🛡️</h1>
+  <img src="docs/assets/icon.svg" alt="Revoker icon" width="120">
+
+  <h1>Revoker</h1>
   <p><em>The agent that lands the revoke before the drainer moves.</em></p>
+
+  <img src="docs/assets/readme-hero-animated.svg" alt="Revoker — an approval turns dangerous, two threat rules fire, the revoke lands through KeeperHub, and the drainer takes nothing" width="100%">
 
   <p>
     We let the drain contract fire <strong>after</strong> the revoke.<br/>
