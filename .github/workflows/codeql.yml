@@ -18,6 +18,7 @@ jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # Code scanning is free on public repositories but needs GitHub Advanced
     # Security on private ones. While this repo is private the analysis runs
     # fine and only the upload fails, which surfaces as a red X that means

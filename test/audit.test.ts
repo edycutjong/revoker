@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -99,7 +99,16 @@ describe('audit', () => {
 
   it('survives an unwritable log path rather than failing the revoke', async () => {
     // Losing the log is bad. Failing to revoke because of it is worse.
-    process.env['REVOKER_AUDIT_LOG'] = '/proc/definitely/not/writable/x.jsonl'
+    //
+    // The unwritable path is built by putting a regular FILE where audit.ts
+    // expects a parent directory, so mkdirSync fails with ENOTDIR instantly on
+    // every OS. Do not reach for a magic system path here: this test used to
+    // use /proc/definitely/not/writable/x.jsonl, which on macOS fails fast
+    // (no procfs) but on Linux makes Node's recursive mkdirSync hang forever —
+    // that one line wedged every CI run on this repo for its whole history.
+    const blocker = join(dir, 'this-is-a-file-not-a-dir')
+    writeFileSync(blocker, 'x')
+    process.env['REVOKER_AUDIT_LOG'] = join(blocker, 'nested', 'revoker.jsonl')
     vi.resetModules()
     const { audit } = await import('../src/audit.js')
 
