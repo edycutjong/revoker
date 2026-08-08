@@ -36,6 +36,26 @@ revert, it was not blocked, it ran exactly as its author intended. It simply had
 nothing left to take, because the approval was already gone. The victim's balance
 is unchanged at 10,000 mUSDC across the whole sequence.
 
+### How fast, measured over 25 cycles
+
+| Metric | p50 | p95 | min | max |
+|---|---|---|---|---|
+| **response** — detection → revoke confirmed | **12.95s** | 24.88s | 10.33s | 24.95s |
+| **exposure** — threat live → revoke confirmed | **13.38s** | 25.01s | 10.47s | 25.28s |
+
+25/25 cycles succeeded. Gas per revoke was a flat 46,482, sponsored in every
+cycle. Two figures rather than one because conflating the agent's own speed with
+the user's real exposure window would flatter the result.
+
+Neither figure includes polling delay — the benchmark triggers detection
+immediately rather than waiting for the timer, so a deployment polling every
+`pollIntervalMs` adds an average of `pollIntervalMs/2` on top. The p95 is more
+than double the p50 because four consecutive cycles hit a slow block-inclusion
+window; that variance is the network's, not the agent's, which is exactly why
+this is reported as a distribution instead of a headline number.
+
+Full per-cycle transaction links: [BENCHMARK.md](./BENCHMARK.md).
+
 Verify it yourself, no credentials needed:
 
 ```bash
@@ -208,6 +228,15 @@ seed contracts deployed to Sepolia; a verified integration spike; and the
 complete detect→revoke→proof cycle above. Landing next: the autonomous watcher
 with three threat rules, unit tests, `scripts/bench.ts` (p50/p95 over N=25), and
 the live `/verify` stream.
+
+## Documentation
+
+| Document | What's in it |
+|---|---|
+| [DEMO.md](./DEMO.md) | Reproduce everything from a clean checkout, with expected output |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | The loop, the TOCTOU decision, failure modes, why KeeperHub |
+| [BENCHMARK.md](./BENCHMARK.md) | p50/p95 detect→revoke latency over N=25, per-cycle transaction links |
+| [deployments.json](./deployments.json) | Contract addresses and deploy transactions |
 
 ## License
 
