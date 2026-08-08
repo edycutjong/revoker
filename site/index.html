@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Revoker — the agent that lands the revoke before the drainer moves</title>
+<title>Revoker — lands the revoke before the drainer moves</title>
 <meta name="description" content="Revoker autonomously executes approve(spender, 0) through KeeperHub the instant a threat fires — no human in the loop. Proof: a real Sepolia drain, stopped." />
 <meta property="og:type" content="website" />
-<meta property="og:title" content="Revoker — the agent that lands the revoke before the drainer moves" />
-<meta property="og:description" content="Autonomous approval revocation through KeeperHub check-and-execute. A real drain, really stopped — 13.47s median detect→revoke, 25/25 cycles, every step a verifiable Sepolia transaction." />
+<meta property="og:title" content="Revoker — lands the revoke before the drainer moves" />
+<meta property="og:description" content="The drain fired after the revoke. It succeeded, and took zero. 13.47s median, 25/25 cycles, every step a real Sepolia tx." />
 <meta property="og:url" content="https://revoker.edycu.dev/" />
   <meta property="og:image" content="https://revoker.edycu.dev/assets/og-image.png" />
   <meta property="og:image:width" content="1200" />
@@ -15,9 +15,10 @@
   <meta property="og:image:alt" content="Revoker — an approval turns dangerous, the revoke lands through KeeperHub, and the drainer takes nothing" />
   <meta property="og:site_name" content="Revoker" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Revoker — the agent that lands the revoke before the drainer moves" />
+  <meta name="twitter:title" content="Revoker — lands the revoke before the drainer moves" />
   <meta name="twitter:description" content="We let the drain contract fire after the revoke. It succeeded, and it took zero." />
   <meta name="twitter:image" content="https://revoker.edycu.dev/assets/og-image.png" />
+  <meta name="twitter:image:alt" content="Revoker — an approval turns dangerous, the revoke lands through KeeperHub, and the drainer takes nothing" />
   <link rel="canonical" href="https://revoker.edycu.dev/" />
   <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
 <meta name="theme-color" content="#0a0c10" media="(prefers-color-scheme: dark)" />
@@ -151,6 +152,22 @@ main, footer{ position:relative; z-index:1 }
 ::selection{background:var(--accent); color:var(--accent-ink)}
 a{color:var(--accent); text-decoration:none}
 a:hover{text-decoration:underline; text-underline-offset:3px; text-decoration-thickness:1px}
+/* A link sitting inside running prose cannot be distinguished by colour alone —
+   a reader with low vision or colour blindness sees undifferentiated text
+   (WCAG 1.4.1, axe link-in-text-block). Links that are their own block (nav,
+   buttons, cards, the tx chips) are already distinguishable by position and
+   shape, so this is scoped to text blocks rather than applied globally. */
+p a, li p a, .video-cap a, .foot-line a, .relay-note a{
+  text-decoration:underline;
+  text-underline-offset:3px;
+  text-decoration-thickness:1px;
+  text-decoration-color:color-mix(in srgb, var(--accent) 55%, transparent);
+}
+p a:hover, .video-cap a:hover, .foot-line a:hover, .relay-note a:hover{
+  text-decoration-color:var(--accent);
+}
+/* the transaction chips are buttons-in-prose: bordered, so already non-colour-coded */
+p a.tx, .tmeta a.tx{text-decoration:none}
 :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:4px}
 code{font-family:var(--mono); font-size:.9em; background:var(--panel2); border:1px solid var(--line);
   border-radius:5px; padding:.08em .38em; white-space:nowrap; font-variant-numeric:tabular-nums}
@@ -604,7 +621,7 @@ td.hot{color:var(--text); font-weight:700}
             <p>The everyday act that arms every drain: <code>approve(spender, MAX_UINT256)</code>
               to a spender contract. Allowance jumps to 1.157e77 — effectively infinite.</p>
             <div class="tmeta">
-              <a class="tx" href="https://sepolia.etherscan.io/tx/0xfe39a5f42d4967548751989c98b0a35971273752e009d90d70c3430d09017482" rel="noopener">0xfe39a5f4&hellip;017482</a>
+              <a class="tx" href="https://sepolia.etherscan.io/tx/0xeb4243d187e95ba606d9ac7d0c6099018238f519753179215a5189bdbafe1113" rel="noopener">0xeb4243d1&hellip;fe1113</a>
               <span class="tresult">allowance = <b>1.157e77</b></span>
             </div>
           </div>
@@ -619,7 +636,7 @@ td.hot{color:var(--text); font-weight:700}
               through KeeperHub's atomic <code>check-and-execute</code>, with no human
               in the loop.</p>
             <div class="tmeta">
-              <a class="tx" href="https://sepolia.etherscan.io/tx/0x325f6d51be89243ed26e8bceba973d41a7a9657addab6d1395210ddfbc7e09f9" rel="noopener">0x325f6d51&hellip;7e09f9</a>
+              <a class="tx" href="https://sepolia.etherscan.io/tx/0x15f0f81626526e7594801d53e6cc3716ea00403b64ca5efac5320203b7541a82" rel="noopener">0x15f0f816&hellip;541a82</a>
               <span class="tresult ok">allowance = <b>0</b></span>
             </div>
           </div>
@@ -633,7 +650,7 @@ td.hot{color:var(--text); font-weight:700}
               It ran exactly as its author intended — and it found nothing to take, because the
               approval was already gone.</p>
             <div class="tmeta">
-              <a class="tx" href="https://sepolia.etherscan.io/tx/0xe127f3d2e2eb20a9825fbec63c56028815ce145c8cdd9e143a02600e2da1a303" rel="noopener">0xe127f3d2&hellip;a1a303</a>
+              <a class="tx" href="https://sepolia.etherscan.io/tx/0x5579da9988e6fafecf3d78025382cae291237559f12534560133a843106e1e4d" rel="noopener">0x5579da99&hellip;6e1e4d</a>
               <span class="tresult ok">drained: <b>0</b></span>
             </div>
           </div>
