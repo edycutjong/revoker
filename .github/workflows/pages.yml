@@ -1,0 +1,55 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+# Only one deploy at a time; a queued run supersedes an older one rather than
+# racing it, but an in-flight deploy is allowed to finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    name: Deploy site/
+    runs-on: ubuntu-latest
+    # Pages on the free tier requires a public repository. While this is private
+    # the deploy would fail with a permissions error that means nothing except
+    # "not public yet" — skip instead, and this starts working by itself on the
+    # flip. Same pattern as the CodeQL workflow.
+    if: github.event.repository.private != true
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify the site is self-contained
+        run: |
+          # These pages are served under a strict no-dependency rule: no CDN, no
+          # webfonts, no analytics. Catch a regression here rather than on the
+          # live domain.
+          if grep -rInE '<script[^>]+src="http|<link[^>]+href="https?://(?!fonts\.gstatic)|@import +url\(https?:' site/ ; then
+            echo "::error::site/ contains an external resource reference"
+            exit 1
+          fi
+          echo "site/ is self-contained"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

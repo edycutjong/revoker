@@ -15,9 +15,11 @@
 
   <br/>
 
-  [![Live Demo](https://img.shields.io/badge/🌐_Live-Demo-06b6d4?style=for-the-badge)](https://edycutjong.github.io/revoker/)
-  [![Pitch Deck](https://img.shields.io/badge/📊_Pitch-Deck-f59e0b?style=for-the-badge)](https://edycutjong.github.io/revoker/pitch.html)
-  [![Built for Agents Onchain](https://img.shields.io/badge/DoraHacks-Agents_Onchain-8b5cf6?style=for-the-badge)](https://dorahacks.io/hackathon/agents-onchain)
+  [![Live Demo](https://img.shields.io/badge/🌐_Live-Demo-06b6d4?style=for-the-badge)](https://revoker.edycu.dev)
+  [![Demo Video](https://img.shields.io/badge/🎬_Demo-Video-ef4444?style=for-the-badge)](FILL_YOUTUBE_URL)
+  [![Pitch Deck](https://img.shields.io/badge/📊_Pitch-Deck-f59e0b?style=for-the-badge)](https://revoker.edycu.dev/pitch.html)
+  [![BUIDL](https://img.shields.io/badge/DoraHacks-BUIDL-8b5cf6?style=for-the-badge)](FILL_BUIDL_URL)
+  [![Agents Onchain](https://img.shields.io/badge/Hackathon-Agents_Onchain-6366f1?style=for-the-badge)](https://dorahacks.io/hackathon/agents-onchain)
   [![Execution layer: KeeperHub](https://img.shields.io/badge/⚡_Execution-KeeperHub-06b6d4?style=for-the-badge)](https://keeperhub.com)
 
   <br/>
