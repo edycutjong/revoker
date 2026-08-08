@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/edycutjong/revoker/compare/v1.2.0...v1.3.0) (2026-08-08)
+
+
+### Features
+
+* publish the demo video and link it everywhere ([#12](https://github.com/edycutjong/revoker/issues/12)) ([9831284](https://github.com/edycutjong/revoker/commit/98312844422848c6f6bcb2ccf5fafcf3e24ec934))
+
 ## [1.2.0](https://github.com/edycutjong/revoker/compare/v1.1.2...v1.2.0) (2026-08-08)
 
 
