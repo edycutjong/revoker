@@ -1,9 +1,9 @@
 name: Diag
 
-# TEMPORARY. Diagnoses why "Quality — lint · types · unit tests" hangs forever in
-# CI while the same suite finishes in ~1s locally. A hanging job never uploads its
-# logs, so every command here is wrapped in `timeout` and its exit code echoed:
-# whatever kills it, we still get the output back.
+# TEMPORARY. Round 2: round 1 proved that test/audit.test.ts is the file that
+# never finishes in CI (the other three always report; audit never does, with or
+# without coverage, in either pool). This round isolates which `it()` inside it
+# hangs, and whether it is the /proc case.
 #
 # Delete this file once the root cause is fixed.
 
@@ -14,9 +14,9 @@ on:
 
 jobs:
   diag:
-    name: Why does vitest hang
+    name: Which test hangs
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -31,44 +31,36 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Versions
+      - name: Environment facts the test depends on
         run: |
           set +e
-          echo "node    $(node -v)"
-          echo "pnpm    $(pnpm -v)"
-          echo "vitest  $(node_modules/.bin/vitest --version)"
-          echo "cpus    $(nproc)"
-          echo "mem     $(free -m | awk '/Mem:/{print $2"MB"}')"
+          echo "whoami: $(whoami)  uid=$(id -u)"
+          echo "--- is /proc a real procfs? ---"
+          stat -f -c '%T' /proc
+          echo "--- can we mkdir -p under /proc? ---"
+          mkdir -p /proc/definitely/not/writable 2>&1; echo "mkdir exit=$?"
+          echo "--- node doing exactly what audit.ts does ---"
+          timeout -v -s KILL 20 node -e '
+            const {mkdirSync,appendFileSync}=require("fs");
+            const p="/proc/definitely/not/writable/x.jsonl";
+            const t=Date.now();
+            try{ mkdirSync(require("path").dirname(p),{recursive:true}); appendFileSync(p,"x\n"); }
+            catch(e){ console.log("threw:", e.code); }
+            console.log("elapsed_ms:", Date.now()-t);
+          '
+          echo "node exit=$?"
 
-      - name: A — tests, NO coverage
+      - name: audit.test.ts ALONE, verbose — which it() hangs
         run: |
           set +e
-          timeout -v -s KILL 120 node_modules/.bin/vitest run --reporter=basic --no-color
-          echo "::notice::A exit=$?"
+          timeout -v -s KILL 90 node_modules/.bin/vitest run test/audit.test.ts \
+            --reporter=verbose --no-color --no-file-parallelism
+          echo "::notice::audit-alone exit=$?"
 
-      - name: B — tests WITH coverage (the suspect)
+      - name: The other three together (control)
         run: |
           set +e
-          timeout -v -s KILL 240 node_modules/.bin/vitest run --coverage --reporter=basic --no-color
-          echo "::notice::B exit=$?"
-
-      - name: C — coverage + hanging-process reporter
-        run: |
-          set +e
-          timeout -v -s KILL 240 node_modules/.bin/vitest run --coverage --reporter=hanging-process --no-color
-          echo "::notice::C exit=$?"
-
-      - name: D — what is still holding the event loop open
-        run: |
-          set +e
-          timeout -v -s KILL 180 node_modules/.bin/vitest run --coverage --no-file-parallelism --pool=forks --reporter=basic --no-color
-          echo "::notice::D exit=$?"
-
-      - name: E — leftover processes and listening sockets
-        if: always()
-        run: |
-          set +e
-          echo "--- node processes ---"
-          ps -eo pid,etimes,stat,cmd | grep -i [n]ode
-          echo "--- listening sockets ---"
-          ss -lntp 2>/dev/null || true
+          timeout -v -s KILL 90 node_modules/.bin/vitest run \
+            test/keeperhub.test.ts test/rules.test.ts test/revoke.test.ts \
+            --reporter=verbose --no-color
+          echo "::notice::others exit=$?"
