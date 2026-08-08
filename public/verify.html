@@ -63,6 +63,7 @@
   .row .time { font-family: var(--mono); font-size: 11px; color: var(--muted); }
   .row .stage { font-family: var(--mono); font-size: 12px; font-weight: 600; }
   .row.threat  .stage { color: var(--danger); }
+  .row.fail    .stage { color: var(--danger); }
   .row.confirm .stage { color: var(--ok); }
   .row.submit  .stage { color: var(--warn); }
   .row .headline { font-size: 13px; }
@@ -91,6 +92,9 @@
     <div class="stat"><div class="k">Scans</div><div class="v" id="s-scans">0</div></div>
     <div class="stat"><div class="k">Threats detected</div><div class="v danger" id="s-threats">0</div></div>
     <div class="stat"><div class="k">Revokes confirmed</div><div class="v ok" id="s-revokes">0</div></div>
+    <!-- Four success-only tiles meant the number a judge glances at could never
+         go down. Failures belong in the same row as the wins. -->
+    <div class="stat"><div class="k">Failures</div><div class="v danger" id="s-failures">0</div></div>
     <div class="stat"><div class="k">Last response</div><div class="v" id="s-latency">—</div></div>
   </div>
   <div id="feed"><div class="empty">Waiting for the agent's first scan…</div></div>
@@ -98,7 +102,7 @@
 
 <script>
 const feed = document.getElementById('feed')
-const stats = { scans: 0, threats: 0, revokes: 0 }
+const stats = { scans: 0, threats: 0, revokes: 0, failures: 0 }
 let explorer = 'https://sepolia.etherscan.io'
 
 fetch('/api/meta').then(r => r.json()).then(m => {
@@ -124,14 +128,22 @@ const KIND = {
   'revoke.submit':    ['submit',  'revoke submitted via check-and-execute'],
   'revoke.confirmed': ['confirm', 'REVOKE CONFIRMED — allowance is zero'],
   'revoke.failed':    ['fail',    'revoke failed'],
+  'revoke.reverted':  ['fail',    'REVOKE REVERTED — allowance still live'],
+  'watch.error':      ['fail',    'scan error — exposure not evaluated'],
   'revoke.skipped':   ['scan',    'revoke skipped'],
 }
+
+// Everything that means the agent did NOT get the allowance to zero. Kept as
+// one set so the tile, the row styling and the detail line can never drift
+// apart when a stage is added.
+const FAILURE = new Set(['revoke.failed', 'revoke.reverted', 'watch.error'])
 
 function render(e) {
   const [cls, headline] = KIND[e.stage] || ['scan', e.stage]
 
   if (e.stage === 'watch.scan') stats.scans++
   if (e.stage === 'threat.detected') stats.threats++
+  if (FAILURE.has(e.stage)) stats.failures++
   if (e.stage === 'revoke.confirmed') {
     stats.revokes++
     if (e.latencyMs) {
@@ -141,6 +153,7 @@ function render(e) {
   document.getElementById('s-scans').textContent = stats.scans
   document.getElementById('s-threats').textContent = stats.threats
   document.getElementById('s-revokes').textContent = stats.revokes
+  document.getElementById('s-failures').textContent = stats.failures
 
   // Collapse consecutive quiet scans so the interesting events stay visible.
   if (cls === 'scan' && feed.firstElementChild?.dataset?.stage === e.stage) {
@@ -171,8 +184,14 @@ function render(e) {
   } else if (e.stage === 'watch.scan') {
     detail += `block <b>${esc(e.block)}</b> · tokens <b>${esc(e.tokensWatched)}</b> · `
     detail += `approvals <b>${esc(e.approvalEvents)}</b> · exposures <b>${esc(e.distinctExposures)}</b>`
-  } else if (e.stage === 'revoke.failed') {
+  } else if (FAILURE.has(e.stage)) {
+    // watch.error carries the exposure it could not evaluate; a whole-scan
+    // failure carries none, which is how the two are told apart.
+    if (e.token) detail += `token <b>${esc(short(e.token))}</b> · spender <b>${short(e.spender)}</b><br>`
     detail += esc(e.error || e.reason || '')
+    if (e.txHash) {
+      detail += `<br><a href="${explorer}/tx/${esc(e.txHash)}" target="_blank" rel="noopener">${esc(e.txHash)}</a>`
+    }
   } else if (e.stage === 'revoke.skipped') {
     detail += esc(e.reason || '')
   }

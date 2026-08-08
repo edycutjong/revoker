@@ -16,6 +16,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p e2e",
     "verify": "tsx src/server.ts",
+    "mcp": "tsx src/mcp.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test:coverage": "vitest run --coverage",
@@ -44,7 +45,9 @@
     "vitest": "^3.2.7"
   },
   "dependencies": {
-    "viem": "^2.21.55"
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "viem": "^2.21.55",
+    "zod": "^3.25.76"
   },
   "pnpm": {
     "overrides": {

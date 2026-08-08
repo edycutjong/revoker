@@ -30,6 +30,23 @@ export interface ExecutionResult {
   error?: string | null
 }
 
+export interface ExecutionStatus extends ExecutionResult {
+  receipts?: Array<{ hash: string; blockNumber: number; receiptStatus: string; gasUsed: string }>
+  createdAt?: string
+  completedAt?: string
+  retryCount?: number
+  /** Gas is reported as `gasUsedWei` here, not `gasUsed` as on the execute responses. */
+  gasUsedWei?: string
+  gasPriceWei?: string
+  /**
+   * Milliseconds the API asked us to wait before polling again, derived from
+   * the `X-Poll-Interval-Hint` response header. `0` is the API stating the
+   * execution has reached a terminal state. Synthesised by this client — it is
+   * a header, not a body field.
+   */
+  pollAfterMs?: number
+}
+
 export interface SimulationResult {
   success: boolean
   status: 'simulated'
@@ -70,6 +87,30 @@ interface ContractCallInput {
 /** Direct-execution endpoints allow 60 req/min per key. */
 const RATE_LIMIT_PER_MINUTE = 60
 
+/**
+ * Exponential backoff with jitter.
+ *
+ * The jitter is not decoration. Revoker is designed to run as several watchers
+ * against one API key, and a rate limit or an upstream blip hits all of them in
+ * the same second. Without a random factor every instance then retries in the
+ * same millisecond and rebuilds the exact burst that caused the 429 — the
+ * lockstep case is the expected one here, not a corner.
+ */
+function backoffMs(attempt: number): number {
+  return 2 ** attempt * 500 * (0.5 + Math.random())
+}
+
+/**
+ * `X-Poll-Interval-Hint` in seconds -> milliseconds, or undefined when the
+ * header is absent or unparseable so the caller falls back to its own cadence.
+ */
+function parsePollHint(headers: Headers): number | undefined {
+  const raw = headers.get('X-Poll-Interval-Hint')
+  if (raw === null) return undefined
+  const seconds = Number(raw)
+  return Number.isFinite(seconds) ? Math.max(0, seconds) * 1000 : undefined
+}
+
 export class KeeperHub {
   #inFlight: number[] = []
 
@@ -86,7 +127,18 @@ export class KeeperHub {
    */
   async #request<T>(
     path: string,
-    init: { method?: string; body?: unknown; idempotencyKey?: string } = {},
+    init: {
+      method?: string
+      body?: unknown
+      idempotencyKey?: string
+      /**
+       * Called with the headers of the attempt that succeeded. Some control
+       * data travels out of band — `X-Poll-Interval-Hint` on the status
+       * endpoint is the one that matters here — and returning only the parsed
+       * body throws it away.
+       */
+      onHeaders?: (headers: Headers) => void
+    } = {},
     attempt = 0,
   ): Promise<T> {
     await this.#throttle()
@@ -118,7 +170,7 @@ export class KeeperHub {
       })
     } catch (error) {
       if (attempt < 4) {
-        await new Promise((resolve) => setTimeout(resolve, 2 ** attempt * 500))
+        await sleep(backoffMs(attempt))
         return this.#request<T>(path, init, attempt + 1)
       }
       throw new Error(
@@ -135,15 +187,20 @@ export class KeeperHub {
       parsed = text
     }
 
-    if (response.ok) return parsed as T
+    if (response.ok) {
+      init.onHeaders?.(response.headers)
+      return parsed as T
+    }
 
     const retryable = response.status === 429 || response.status >= 500
     if (retryable && attempt < 4) {
       const retryAfter = Number(response.headers.get('Retry-After'))
-      const backoffMs = Number.isFinite(retryAfter) && retryAfter > 0
-        ? retryAfter * 1000
-        : 2 ** attempt * 500
-      await sleep(backoffMs)
+      // An explicit Retry-After is the server telling us exactly when it will
+      // be ready; jittering that would only make us early or late. The
+      // computed fallback is the one that needs spreading out.
+      const waitMs =
+        Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : backoffMs(attempt)
+      await sleep(waitMs)
       return this.#request<T>(path, init, attempt + 1)
     }
 
@@ -306,19 +363,21 @@ export class KeeperHub {
     })
   }
 
-  /** GET /api/execute/{id}/status — audit record, receipts, gas, sponsorship. */
-  async getExecutionStatus(executionId: string): Promise<
-    ExecutionResult & {
-      receipts?: Array<{ hash: string; blockNumber: number; receiptStatus: string; gasUsed: string }>
-      createdAt?: string
-      completedAt?: string
-      retryCount?: number
-      /** Gas is reported as `gasUsedWei` here, not `gasUsed` as on the execute responses. */
-      gasUsedWei?: string
-      gasPriceWei?: string
-    }
-  > {
-    return this.#request(`/api/execute/${executionId}/status`)
+  /**
+   * GET /api/execute/{id}/status — audit record, receipts, gas, sponsorship.
+   *
+   * Also surfaces the `X-Poll-Interval-Hint` header as `pollAfterMs`, because
+   * the docs are explicit that callers should pace on it rather than on a
+   * fixed timer — and that a hint of `0` means the execution is terminal.
+   */
+  async getExecutionStatus(executionId: string): Promise<ExecutionStatus> {
+    let pollAfterMs: number | undefined
+    const status = await this.#request<ExecutionStatus>(`/api/execute/${executionId}/status`, {
+      onHeaders: (headers) => {
+        pollAfterMs = parsePollHint(headers)
+      },
+    })
+    return pollAfterMs === undefined ? status : { ...status, pollAfterMs }
   }
 
   #contractBody(input: ContractCallInput): Record<string, unknown> {

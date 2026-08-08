@@ -14,11 +14,15 @@ import { dirname } from 'node:path'
 export type AuditStage =
   | 'watch.start'
   | 'watch.scan'
+  /** The scan itself blew up — an RPC blip, not a revoke that failed. */
+  | 'watch.error'
   | 'threat.detected'
   | 'threat.cleared'
   | 'revoke.submit'
   | 'revoke.confirmed'
   | 'revoke.failed'
+  /** Submitted and mined, but the transaction reverted. Distinct from never landing. */
+  | 'revoke.reverted'
   | 'revoke.skipped'
 
 export interface AuditEntry {
@@ -28,7 +32,8 @@ export interface AuditEntry {
 }
 
 /**
- * Resolved per call, not once at module load.
+ * Where the durable trail lives. Resolved per call, not once at module load,
+ * and exported so the dashboard replays the same file the agent writes.
  *
  * Captured at load, the path is fixed before any test can set
  * REVOKER_AUDIT_LOG in a beforeEach — so the suite appended to the real
@@ -37,7 +42,7 @@ export interface AuditEntry {
  * so the two were indistinguishable by eye in the one artifact whose whole
  * purpose is being trustworthy after the fact.
  */
-function logPath(): string {
+export function auditLogPath(): string {
   return process.env['REVOKER_AUDIT_LOG'] ?? 'audit/revoker.jsonl'
 }
 
@@ -59,14 +64,24 @@ function serialize(value: unknown): unknown {
 }
 
 export function audit(stage: AuditStage, detail: Record<string, unknown> = {}): AuditEntry {
+  const ts = new Date().toISOString()
   const entry: AuditEntry = {
-    ts: new Date().toISOString(),
+    ts,
     stage,
     ...(serialize(detail) as Record<string, unknown>),
   }
 
+  // The envelope wins over the payload. `audit('revoke.failed', { stage:
+  // 'scan' })` used to spread its own `stage` over the canonical one, so the
+  // entry was written as stage "scan": the real stage never appeared, stage
+  // filters missed it, and STAGE_LABEL['scan'] printed the literal `undefined`.
+  // Reassigning after the spread keeps both keys in their original position
+  // while making that clobber impossible for any future caller.
+  entry.ts = ts
+  entry.stage = stage
+
   try {
-    const path = logPath()
+    const path = auditLogPath()
     mkdirSync(dirname(path), { recursive: true })
     appendFileSync(path, `${JSON.stringify(entry)}\n`)
   } catch {
@@ -93,7 +108,9 @@ const STAGE_LABEL: Record<AuditStage, string> = {
   'revoke.submit': '↗',
   'revoke.confirmed': '✅',
   'revoke.failed': '❌',
+  'revoke.reverted': '↩',
   'revoke.skipped': '⏭',
+  'watch.error': '⚠',
 }
 
 function formatValue(value: unknown): string {

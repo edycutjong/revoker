@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { readFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -482,6 +482,104 @@ describe('server.ts — /api/stream (SSE)', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('server.ts — replaying the durable trail after a restart', () => {
+  /** One JSONL line, as audit.ts would have appended it. */
+  function line(stage: string, detail: Record<string, unknown> = {}): string {
+    return JSON.stringify({ ts: new Date().toISOString(), stage, ...detail })
+  }
+
+  it('backfills history from the audit log on boot, so a restart is not a blank page', async () => {
+    // The trail on disk and the dashboard used to disagree after every
+    // restart: the JSONL held the whole run, the UI showed nothing.
+    writeFileSync(
+      join(dir, 'audit.jsonl'),
+      `${line('watch.start', { owner: '0xabc' })}\n${line('revoke.confirmed', { txHash: '0xfeed' })}\n`,
+    )
+
+    const listener = await loadServer()
+    const req = makeReq('/api/stream')
+    const res = makeRes()
+    listener(req, res as unknown as ServerResponse)
+
+    const pushed = res.write.mock.calls.map((c: unknown[]) => c[0] as string)
+    expect(pushed).toHaveLength(2)
+    expect(pushed[0]).toContain('"stage":"watch.start"')
+    expect(pushed[1]).toContain('0xfeed')
+
+    req.emit('close')
+  })
+
+  it('replays only the last 200 lines of a long log', async () => {
+    // Same cap the live buffer honours. The trailing newline of the final
+    // append must not count as an entry and push the oldest one out.
+    const lines = Array.from({ length: 250 }, (_, seq) => line('watch.scan', { seq }))
+    writeFileSync(join(dir, 'audit.jsonl'), `${lines.join('\n')}\n`)
+
+    const listener = await loadServer()
+    const req = makeReq('/api/stream')
+    const res = makeRes()
+    listener(req, res as unknown as ServerResponse)
+
+    const pushed = res.write.mock.calls.map((c: unknown[]) => c[0] as string)
+    expect(pushed).toHaveLength(200)
+    expect(pushed[0]).toContain('"seq":50')
+    expect(pushed.at(-1)).toContain('"seq":249')
+
+    req.emit('close')
+  })
+
+  it('skips a torn final line instead of losing the whole replay', async () => {
+    // A process killed mid-append leaves half a line. Parsing the tail in one
+    // go would drop every good entry with it.
+    writeFileSync(
+      join(dir, 'audit.jsonl'),
+      `${line('watch.start', { owner: '0xabc' })}\n{"ts":"2026-08-08T00:00:00.0`,
+    )
+
+    const listener = await loadServer()
+    const req = makeReq('/api/stream')
+    const res = makeRes()
+    listener(req, res as unknown as ServerResponse)
+
+    const pushed = res.write.mock.calls.map((c: unknown[]) => c[0] as string)
+    expect(pushed).toHaveLength(1)
+    expect(pushed[0]).toContain('"stage":"watch.start"')
+
+    req.emit('close')
+  })
+
+  it('starts empty when no audit log exists yet', async () => {
+    const listener = await loadServer()
+    const req = makeReq('/api/stream')
+    const res = makeRes()
+    listener(req, res as unknown as ServerResponse)
+
+    expect(res.write).not.toHaveBeenCalled()
+
+    req.emit('close')
+  })
+})
+
+describe('server.ts — the dashboard it serves', () => {
+  it('has a failures tile that counts every stage where the allowance survived', async () => {
+    // Scans / Threats / Revokes confirmed / Last response are all success-only,
+    // so the aggregate a judge glances at could never go down. A stage the
+    // KIND map does not know renders with no headline and counts as nothing.
+    const listener = await loadServer()
+    const req = makeReq('/verify')
+    const res = makeRes()
+
+    listener(req, res as unknown as ServerResponse)
+
+    const body = res.end.mock.calls[0]?.[0] as string
+    expect(body).toContain('id="s-failures"')
+    for (const stage of ['revoke.failed', 'revoke.reverted', 'watch.error']) {
+      expect(body).toContain(`'${stage}':`)
+    }
+    expect(body).toMatch(/FAILURE\s*=\s*new Set\(\[[^\]]*'watch\.error'/)
   })
 })
 

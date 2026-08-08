@@ -71,6 +71,22 @@ describe('audit', () => {
     expect(entry!['list']).toEqual(['1', '2'])
   })
 
+  it('never lets a detail key clobber the stage it was called with', async () => {
+    // This is not hypothetical: watcher.ts logged scan failures as
+    // audit('revoke.failed', { stage: 'scan' }). The spread put the detail key
+    // last, so every one of those entries was written with stage "scan" — a
+    // value not in the union. The string "revoke.failed" never appeared, a
+    // filter for it found nothing, STAGE_LABEL['scan'] printed the literal
+    // "undefined", and the dashboard still drew them as failed revokes.
+    const { audit } = await import('../src/audit.js')
+
+    const entry = audit('watch.error', { stage: 'scan', ts: 'not-a-timestamp', error: 'boom' })
+
+    expect(entry.stage).toBe('watch.error')
+    expect(entry.ts).not.toBe('not-a-timestamp')
+    expect(readEntries()[0]).toMatchObject({ stage: 'watch.error', error: 'boom' })
+  })
+
   it('notifies subscribers, and unsubscribes cleanly', async () => {
     const { audit, onAudit } = await import('../src/audit.js')
     const seen: string[] = []

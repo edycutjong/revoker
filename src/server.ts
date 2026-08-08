@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { config } from './config.js'
-import { onAudit, type AuditEntry } from './audit.js'
+import { auditLogPath, onAudit, type AuditEntry } from './audit.js'
 import { Watcher } from './watcher.js'
 
 /**
@@ -26,6 +26,39 @@ const history: AuditEntry[] = []
 const HISTORY_LIMIT = 200
 
 const clients = new Set<ServerResponse>()
+
+/**
+ * Refill `history` from the durable trail on boot.
+ *
+ * The JSONL is the record; `history` is only a cache of its tail. Starting that
+ * cache empty meant a restart showed a judge a blank dashboard over a log file
+ * that held the entire run — the two artifacts telling different stories about
+ * the same agent, with the emptier one on screen.
+ *
+ * Parsed line by line rather than in one go: a process killed mid-append leaves
+ * a torn final line, and losing the whole replay to one bad character would
+ * reintroduce exactly the blank page this exists to prevent.
+ */
+function loadHistory(): void {
+  let raw: string
+  try {
+    raw = readFileSync(auditLogPath(), 'utf8')
+  } catch {
+    // No log yet — a first run, or a path this process cannot read.
+    return
+  }
+
+  // Filter before slicing, so the trailing newline every append leaves behind
+  // does not eat one entry off the front of the window.
+  const lines = raw.split('\n').filter((line) => line.length > 0)
+  for (const line of lines.slice(-HISTORY_LIMIT)) {
+    try {
+      history.push(JSON.parse(line) as AuditEntry)
+    } catch {
+      // Torn or empty line; the rest of the tail is still worth showing.
+    }
+  }
+}
 
 function broadcast(entry: AuditEntry): void {
   history.push(entry)
@@ -124,6 +157,7 @@ function main(): void {
     res.end('not found')
   })
 
+  loadHistory()
   onAudit(broadcast)
 
   server.listen(PORT, () => {

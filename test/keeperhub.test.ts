@@ -22,6 +22,10 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
+  // Math.random is spied on by the jitter tests; unstubAllGlobals does not
+  // undo vi.spyOn, and a leaked deterministic Math.random would quietly make
+  // every later backoff assertion meaningless.
+  vi.restoreAllMocks()
 })
 
 /** Runs a request to completion while auto-advancing the backoff timers. */
@@ -82,6 +86,114 @@ describe('KeeperHub retry policy', () => {
       status: 403,
       body: { error: 'Daily spending cap exceeded' },
     })
+  })
+})
+
+/**
+ * Revoker is meant to run as several watchers against one API key, so a rate
+ * limit or an upstream blip hits every instance in the same second. Lockstep
+ * retries would then rebuild the exact burst that caused the 429. These tests
+ * pin the jitter window rather than the mean, because a mean can be right while
+ * every instance still fires at the same instant.
+ */
+describe('KeeperHub backoff jitter', () => {
+  /** Attempt 0's deterministic term is 500ms; jitter scales it by 0.5–1.5. */
+  async function firstBackoff(random: number): Promise<number> {
+    vi.spyOn(Math, 'random').mockReturnValue(random)
+    fetchMock
+      .mockResolvedValueOnce(response(503, { error: 'down' }))
+      .mockResolvedValueOnce(response(200, { hasWallet: true }))
+
+    const settled = kh().getWallet()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    let elapsed = 0
+    while (fetchMock.mock.calls.length < 2 && elapsed < 5_000) {
+      await vi.advanceTimersByTimeAsync(1)
+      elapsed += 1
+    }
+    await settled
+    return elapsed
+  }
+
+  it('waits the LOW end of the window when the jitter roll is minimal', async () => {
+    expect(await firstBackoff(0)).toBe(250)
+  })
+
+  it('waits the HIGH end of the window when the jitter roll is maximal', async () => {
+    // 250ms vs 750ms off the same attempt number is the whole point: two
+    // instances that failed together no longer retry together.
+    expect(await firstBackoff(1)).toBe(750)
+  })
+
+  it('jitters the transport-failure path on the same schedule as a 5xx', async () => {
+    // fetch REJECTING is the same class of problem and must not be the one
+    // path left retrying in lockstep.
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    fetchMock
+      .mockRejectedValueOnce(new Error('ECONNRESET'))
+      .mockResolvedValueOnce(response(200, { hasWallet: true }))
+
+    const settled = kh().getWallet()
+    await vi.advanceTimersByTimeAsync(249)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    await settled
+  })
+
+  it('honours an explicit Retry-After exactly, without jittering it', async () => {
+    // The server named a time. Spreading around it would only make us early.
+    vi.spyOn(Math, 'random').mockReturnValue(1)
+    fetchMock
+      .mockResolvedValueOnce(response(429, { error: 'slow down' }, { 'Retry-After': '2' }))
+      .mockResolvedValueOnce(response(200, { hasWallet: true }))
+
+    const settled = kh().getWallet()
+    await vi.advanceTimersByTimeAsync(1_999)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    await settled
+  })
+})
+
+/**
+ * The docs are explicit: poll the status endpoint on the X-Poll-Interval-Hint
+ * header rather than a fixed timer, and treat a hint of 0 as "terminal". The
+ * header is control data that a body-only client throws away.
+ */
+describe('getExecutionStatus poll hint', () => {
+  it('surfaces the X-Poll-Interval-Hint header as milliseconds', async () => {
+    fetchMock.mockResolvedValue(
+      response(200, { executionId: 'e1', status: 'pending' }, { 'X-Poll-Interval-Hint': '3' }),
+    )
+
+    expect((await run(kh().getExecutionStatus('e1'))).pollAfterMs).toBe(3_000)
+  })
+
+  it('preserves a hint of ZERO — the API saying the execution is terminal', async () => {
+    // Must survive as 0 and not collapse to "absent": 0 carries meaning here.
+    fetchMock.mockResolvedValue(
+      response(200, { executionId: 'e1', status: 'completed' }, { 'X-Poll-Interval-Hint': '0' }),
+    )
+
+    expect((await run(kh().getExecutionStatus('e1'))).pollAfterMs).toBe(0)
+  })
+
+  it('omits pollAfterMs entirely when the header is absent', async () => {
+    fetchMock.mockResolvedValue(response(200, { executionId: 'e1', status: 'pending' }))
+
+    expect(await run(kh().getExecutionStatus('e1'))).not.toHaveProperty('pollAfterMs')
+  })
+
+  it('ignores an unparseable hint rather than sleeping for NaN', async () => {
+    fetchMock.mockResolvedValue(
+      response(200, { executionId: 'e1', status: 'pending' }, { 'X-Poll-Interval-Hint': 'soon' }),
+    )
+
+    expect(await run(kh().getExecutionStatus('e1'))).not.toHaveProperty('pollAfterMs')
   })
 })
 
