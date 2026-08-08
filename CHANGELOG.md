@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/edycutjong/revoker/compare/v1.3.0...v1.3.1) (2026-08-08)
+
+
+### Fixes
+
+* correct the proof transactions, distinguish prose links, tighten meta ([#14](https://github.com/edycutjong/revoker/issues/14)) ([d26fe2c](https://github.com/edycutjong/revoker/commit/d26fe2ce7b60d769c69b707952fd60390b73c267))
+
 ## [1.3.0](https://github.com/edycutjong/revoker/compare/v1.2.0...v1.3.0) (2026-08-08)
 
 
