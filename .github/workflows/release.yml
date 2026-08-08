@@ -38,10 +38,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          NUM=$(echo '${{ steps.release.outputs.pr }}' | python3 -c 'import sys,json;print(json.load(sys.stdin).get("number",""))' 2>/dev/null || true)
-          [ -z "$NUM" ] && NUM=$(gh pr list --state open --search "release-please in:title" --json number -q '.[0].number' 2>/dev/null || true)
+          # This job never checks out, so `gh` has no git remote to infer from
+          # and fails with "not a git repository". Pass --repo explicitly rather
+          # than adding a checkout just to give the CLI somewhere to stand.
+          REPO="${{ github.repository }}"
+          NUM=$(echo '${{ steps.release.outputs.pr }}' \
+            | python3 -c 'import sys,json;print(json.load(sys.stdin).get("number",""))' 2>/dev/null || true)
+          if [ -z "$NUM" ]; then
+            NUM=$(gh pr list --repo "$REPO" --state open \
+              --search "release-please in:title" --json number -q '.[0].number' 2>/dev/null || true)
+          fi
           if [ -n "$NUM" ]; then
-            gh pr merge "$NUM" --squash --auto && echo "auto-merge queued on #$NUM"
+            gh pr merge "$NUM" --repo "$REPO" --squash --auto \
+              && echo "auto-merge queued on #$NUM"
           else
             echo "no open release PR — nothing to queue"
           fi
