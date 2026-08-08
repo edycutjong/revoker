@@ -74,7 +74,7 @@ DEPLOYER_PRIVATE_KEY=0x...   # throwaway; deploys the fixtures AND plays the adv
 
 `DEPLOYER_PRIVATE_KEY` is a throwaway testnet key. It deploys the demo contracts
 and **sends the drain transaction, because it is the attacker.** It never signs a
-revoke, and it is the **only non-KeeperHub transaction anywhere in this demo
+revoke, and it is the **only non-KeeperHub transaction in the attack/defence
 path.** Generate one with `cast wallet new` and send it ~0.02 Sepolia ETH.
 
 ```bash
@@ -168,7 +168,7 @@ and needs no auth — so it is free to disagree with the seed's own report.
 🚨 threat.detected   mUSDC  allowance=MAX_UINT256  atRisk=10000000000
                      rules=[unlimited-to-unverified, denylisted]
 ↗  revoke.submit     method=check-and-execute
-✅ revoke.confirmed  0x15f0f816…  allowanceAfter=0  sponsored=true
+✅ revoke.confirmed  0xc45a19a6…  allowanceAfter=0  sponsored=true
 ```
 
 No manual step happens between detection and revoke. Use `--dry-run` to watch it
@@ -184,7 +184,7 @@ cast call 0x4facb5FD1682c4449cAD42b7590861f7eD5c88Cb \
 # 0
 ```
 
-Reference run: [`0x15f0f816…541a82`](https://sepolia.etherscan.io/tx/0x15f0f81626526e7594801d53e6cc3716ea00403b64ca5efac5320203b7541a82)
+Reference run: [`0xc45a19a6…a86d7c`](https://sepolia.etherscan.io/tx/0xc45a19a63808c106db3a3394d130db486fef17b5e920bbd860d6907729a86d7c) (block 11445665)
 
 > **Reading that link.** It opens on KeeperHub's relayer page, which looks
 > opaque. **Open the `Logs` tab** — MockUSDC emits `Approval(owner, spender, 0)`.
@@ -218,7 +218,7 @@ cast call 0x4facb5FD1682c4449cAD42b7590861f7eD5c88Cb \
 # 10000000000
 ```
 
-Reference run: [`0x5579da99…6e1e4d`](https://sepolia.etherscan.io/tx/0x5579da9988e6fafecf3d78025382cae291237559f12534560133a843106e1e4d)
+Reference run: [`0xf0c69049…8ab3a9d`](https://sepolia.etherscan.io/tx/0xf0c690494418178f4e0eae105b39835a72a3ae5a4d805a430097d367d8ab3a9d) (block 11445667 — two blocks after the revoke above)
 
 > **Reading that link.** `Logs` shows `DrainFailed` and, decisively, **no
 > `Transfer` event**. The drain ran; nothing moved. This is the whole thesis in

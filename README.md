@@ -10,7 +10,7 @@
   <p>
     We let the drain contract fire <strong>after</strong> the revoke.<br/>
     It succeeded, and it took <strong>zero</strong>.<br/>
-    <a href="https://sepolia.etherscan.io/tx/0x5579da9988e6fafecf3d78025382cae291237559f12534560133a843106e1e4d">See the transaction</a>.
+    <a href="https://sepolia.etherscan.io/tx/0xf0c690494418178f4e0eae105b39835a72a3ae5a4d805a430097d367d8ab3a9d">See the transaction</a>.
   </p>
 
   <br/>
@@ -206,11 +206,17 @@ Every claim below links to a transaction anyone can open.
 
 ### The headline: a real drain, really stopped
 
-| # | Step | Transaction | Result |
-|---|---|---|---|
-| 1 | Wallet grants `approve(spender, MAX_UINT256)` | [`0xeb4243d1…fe1113`](https://sepolia.etherscan.io/tx/0xeb4243d187e95ba606d9ac7d0c6099018238f519753179215a5189bdbafe1113) | allowance = `1.157e77` |
-| 2 | **Revoker fires `approve(spender, 0)`** via `check-and-execute` | [`0x15f0f816…541a82`](https://sepolia.etherscan.io/tx/0x15f0f81626526e7594801d53e6cc3716ea00403b64ca5efac5320203b7541a82) | **allowance = 0** |
-| 3 | Drainer fires anyway | [`0x5579da99…6e1e4d`](https://sepolia.etherscan.io/tx/0x5579da9988e6fafecf3d78025382cae291237559f12534560133a843106e1e4d) | **takes 0. Funds intact.** |
+| # | Step | Block | Transaction | Result |
+|---|---|---|---|---|
+| 1 | Wallet grants `approve(spender, MAX_UINT256)` | `11445662` | [`0x99227905…0cda6f`](https://sepolia.etherscan.io/tx/0x99227905d442b68245f5d7858aba34b87c89abd8f268fc1d239b7114f80cda6f) | allowance = `1.157e77` |
+| 2 | **Revoker fires `approve(spender, 0)`** via `check-and-execute` | `11445665` | [`0xc45a19a6…a86d7c`](https://sepolia.etherscan.io/tx/0xc45a19a63808c106db3a3394d130db486fef17b5e920bbd860d6907729a86d7c) | **allowance = 0** |
+| 3 | Drainer fires anyway | `11445667` | [`0xf0c69049…8ab3a9d`](https://sepolia.etherscan.io/tx/0xf0c690494418178f4e0eae105b39835a72a3ae5a4d805a430097d367d8ab3a9d) | **takes 0. Funds intact.** |
+
+The block column is there so you can check the ordering rather than trust it:
+**11445662 → 11445665 → 11445667**, one run, five blocks, nothing in between.
+An earlier version of this table linked three real transactions that were *not*
+consecutive — each claim was true, the sequence was a composite. It was pointed
+out in review, so we re-ran the whole scenario clean rather than explain it.
 
 > **Reading step 2 in 15 seconds.** The explorer opens on KeeperHub's relayer
 > page, which looks opaque. **Open the `Logs` tab** — MockUSDC emits
@@ -295,7 +301,7 @@ Every `from` on the explorer pages above is one of four addresses:
 | `0xf40c…3ff3` | the **throwaway deploy/adversary key** — fixtures and the drain |
 
 The throwaway key sends the drain transaction **because it is the attacker**.
-It is the only non-KeeperHub transaction anywhere in the demo path; it never
+It is the only non-KeeperHub transaction in the attack/defence path — the fixture deploys and the mint are also locally signed — and it never
 signs a revoke and it holds nothing worth taking.
 
 <details>
