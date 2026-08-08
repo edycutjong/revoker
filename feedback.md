@@ -1,7 +1,8 @@
 # KeeperHub — a zero-to-first-transaction teardown
 
 Written while building [Revoker](./README.md) for Agents Onchain, by someone who
-had never used KeeperHub before. Seven findings, every one hit in practice. Each
+had never used KeeperHub before. Six findings hit in practice, plus one correction
+to a claim I made and later disproved (#7). Each
 has a proposed fix, and each says plainly what evidence backs it — five are
 reproducible from this repo, two rest on my own observation and are marked as
 such.
@@ -186,21 +187,45 @@ apart programmatically.
 
 ---
 
-## 7. Two documented CLI commands are 404
+## 7. Guessable CLI command names land on a 404 with no suggestion
 
-**Severity: low, but trivially fixable.**
+**Severity: low. Also a correction to something I got wrong.**
 
-Both verified returning HTTP 404 on 2026-08-08:
+I originally reported this as "two documented commands are 404". **That was
+wrong, and I want to be precise about how**, because it is itself a DX finding.
 
-- `https://docs.keeperhub.com/cli/commands/kh_execute_contract`
-- `https://docs.keeperhub.com/cli/commands/kh_workflow_go`
+The commands are `kh execute contract-call` and `kh workflow go-live`. I guessed
+`contract` and `go`, constructed the doc URLs from those guesses, got 404s, and
+concluded the docs were broken. They are not — both pages exist and return 200:
 
-`https://docs.keeperhub.com/api/overview` is also 404.
+| URL | Status |
+|---|---|
+| `/cli/commands/kh_execute_contract-call` | **200** |
+| `/cli/commands/kh_workflow_go-live` | **200** |
+| `/cli/commands/kh_execute_contract` — my guess | 404 |
+| `/cli/commands/kh_workflow_go` — my guess | 404 |
 
-**Proposed fix:** fix or remove the links. If those CLI verbs don't exist and the
-functionality is REST/MCP-only, saying so is more useful than a dead page —
-"contract calls are available via the API and MCP server, not the CLI" would have
-saved me checking whether I'd mistyped.
+Same for `/api/overview`, which I also invented; the real index is `/api`, 200.
+
+**The real finding is why the guesses were natural.** `kh execute transfer` and
+`kh execute status` are single words, so `kh execute contract` is the obvious
+extrapolation — the odd one out is the hyphenated `contract-call`. And every
+other verb in the CLI is short (`get`, `list`, `set`), which makes `go` a more
+natural guess than `go-live`.
+
+**Proposed fix, in order of value:**
+1. **Have the CLI suggest.** `kh execute contract` currently isn't a command; a
+   "did you mean `contract-call`?" on unknown subcommands would end this class of
+   problem at the source, not just in docs.
+2. **Redirect the near-misses** in the docs site — `/cli/commands/kh_execute_contract`
+   → `contract-call`, `/cli/commands/kh_workflow_go` → `go-live`, `/api/overview`
+   → `/api`. Cheap, and it catches everyone who guesses the same way I did.
+3. A 404 page that lists near-matching slugs would generalise both.
+
+**Method note, offered honestly:** I should have hit `/cli/commands` and read the
+index before asserting a page was missing. That mistake is in here rather than
+quietly deleted, because a teardown that only reports the platform's errors and
+not the tester's is not an honest teardown.
 
 ---
 
@@ -227,6 +252,33 @@ saved me checking whether I'd mistyped.
 
 ---
 
+## The teardown, turned into code
+
+Everything above is now a runnable starter template: **[`starter/`](./starter/)**.
+
+```bash
+export KH_API_KEY=kh_...
+node starter/quickstart.mjs
+```
+
+One file, no dependencies, no build step, Node 20+. Seven steps from a fresh API
+key to a real on-chain transaction, verified against a public RPC rather than
+against KeeperHub's own report. `--doctor` runs the checks and stops before
+spending anything.
+
+Every guard in it exists because one of the findings above cost me time in that
+order. It sets a `User-Agent` (finding #2), warns about the network slug at the
+moment you would get it wrong (#5), reads the hash from `/status` (#3), and
+notes the `gasUsed`/`gasUsedWei` split inline (#4). The failure paths explain
+themselves — a bodiless 403 says "this is the edge, not your key" instead of
+letting you re-check a good key for forty minutes.
+
+Verified end to end before shipping: landed
+[`0x191cc3cb…`](https://sepolia.etherscan.io/tx/0x191cc3cbb8abb1e6f7fc6983132b91f1b4c9ebd12e93defdf1818198f4fd22d4)
+in 8.3s, mined in block 11,442,960.
+
+---
+
 ## Reproductions
 
 Not all of these are equally reproducible from this repo, so here is exactly
@@ -240,7 +292,7 @@ what backs each one:
 | 4 | `src/keeperhub.ts` — the status response type carries `gasUsedWei` where the execute response carries `gasUsed`. |
 | 5 | **My observation only.** The probe was run by hand and not recorded. |
 | 6 | `src/watcher.ts` + `src/keeperhub.ts` — token discovery falls back to an explicit watchlist because of this. |
-| 7 | Verified live on 2026-08-08 with `curl`. |
+| 7 | Verified live with `curl` and against the docs source in `KeeperHub/keeperhub`. Includes a correction to my own earlier claim. |
 
 `pnpm spike` exercises the integration end to end and verifies its result against
 a public RPC rather than trusting KeeperHub's own report — see

@@ -422,7 +422,8 @@ contracts/
 | [BENCHMARK.md](./BENCHMARK.md) | p50/p95 latency over N=25, per-cycle transaction links |
 | [deployments.json](./deployments.json) | Contract addresses and deploy transactions |
 | [.github/SECURITY.md](./.github/SECURITY.md) | Threat model, and what does *not* count as a vulnerability |
-| [feedback.md](./feedback.md) | Zero-to-first-transaction teardown of KeeperHub — 7 findings with fixes, 5 reproducible from this repo |
+| [feedback.md](./feedback.md) | Zero-to-first-transaction teardown of KeeperHub — 6 findings plus one self-correction |
+| [starter/](./starter/) | `keeperhub-quickstart` — that teardown as a runnable, dependency-free template |
 
 ---
 

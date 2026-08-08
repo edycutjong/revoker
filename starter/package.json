@@ -1,0 +1,13 @@
+{
+  "name": "keeperhub-quickstart",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Zero to a landed on-chain transaction through KeeperHub, in one command.",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node quickstart.mjs",
+    "doctor": "node quickstart.mjs --doctor"
+  }
+}
