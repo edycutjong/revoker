@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/edycutjong/revoker/compare/v1.4.1...v1.5.0) (2026-08-08)
+
+
+### Features
+
+* **ci:** add the missing E2E and performance layers, stamp the released version ([#20](https://github.com/edycutjong/revoker/issues/20)) ([deb31b6](https://github.com/edycutjong/revoker/commit/deb31b63e5b960e071bc20114626067634b089a9))
+
 ## [1.4.1](https://github.com/edycutjong/revoker/compare/v1.4.0...v1.4.1) (2026-08-08)
 
 
