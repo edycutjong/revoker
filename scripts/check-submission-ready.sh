@@ -55,12 +55,17 @@ done < <(grep -oE 'src="(docs|assets)/[^"]+"' README.md | sed 's/src="//;s/"//')
 [ "$missing" -eq 0 ] && note "✓ README images tracked" || fail=1
 
 # --- credentials must never be committed ------------------------------------
-if git grep -InE 'kh_[A-Za-z0-9_-]{20,}|PRIVATE_KEY=0x[0-9a-fA-F]{64}' -- . 2>/dev/null \
-   | grep -vE 'etherscan|deployTx|transactionHash|your_|check-submission-ready' >/dev/null; then
-  note "✗ credential-shaped string in tracked files"
-  fail=1
-else
+# Delegated to check-no-credentials.sh, which CI already runs, rather than
+# re-implemented here. This script used to carry its own weaker copy of the
+# pattern and reported a permanent false positive on the documentation slug
+# `kh_execute_contract-call` — 24 characters after the prefix, so it matched
+# `kh_[A-Za-z0-9_-]{20,}`. One definition, one behaviour, no drift.
+if bash "$(dirname "$0")/check-no-credentials.sh" >/dev/null 2>&1; then
   note "✓ no credentials committed"
+else
+  note "✗ credential-shaped string in tracked files"
+  bash "$(dirname "$0")/check-no-credentials.sh" 2>&1 | sed 's/^/      /'
+  fail=1
 fi
 
 echo
