@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.2](https://github.com/edycutjong/revoker/compare/v1.7.1...v1.7.2) (2026-08-08)
+
+
+### Documentation
+
+* reconcile test counts after the destination-guard tests ([4378b7b](https://github.com/edycutjong/revoker/commit/4378b7bf6c7fc40921fdc2631076642e7b7fa09d))
+* test counts 720 -&gt; 724, total 808 -&gt; 812 ([146dab6](https://github.com/edycutjong/revoker/commit/146dab6474b3bb54a3466df945eb5011bf905fe5))
+
 ## [1.7.1](https://github.com/edycutjong/revoker/compare/v1.7.0...v1.7.1) (2026-08-08)
 
 
