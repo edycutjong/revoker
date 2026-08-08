@@ -529,9 +529,10 @@ td.hot{color:var(--text); font-weight:700}
           <div class="tcard">
             <span class="ttag warn">The response</span>
             <h3>Revoker fires — no human involved</h3>
-            <p>The <code>unlimited-to-unverified</code> rule trips. Revoker executes
-              <code>approve(spender, 0)</code> through KeeperHub's atomic
-              <code>check-and-execute</code>, 11.3 seconds after detection.</p>
+            <p>Two rules trip — <code>unlimited-to-unverified</code> and
+              <code>denylisted</code>. Revoker executes <code>approve(spender, 0)</code>
+              through KeeperHub's atomic <code>check-and-execute</code>, with no human
+              in the loop.</p>
             <div class="tmeta">
               <a class="tx" href="https://sepolia.etherscan.io/tx/0x325f6d51be89243ed26e8bceba973d41a7a9657addab6d1395210ddfbc7e09f9" rel="noopener">0x325f6d51&hellip;7e09f9</a>
               <span class="tresult ok">allowance = <b>0</b></span>
@@ -766,8 +767,8 @@ td.hot{color:var(--text); font-weight:700}
 
       <div class="mini-stats">
         <span class="mini-stat"><b>10</b> distinct API surfaces</span>
-        <span class="mini-stat"><b>23</b> call sites</span>
-        <span class="mini-stat"><b>15</b> tests</span>
+        <span class="mini-stat"><b>12</b> application call sites</span>
+        <span class="mini-stat"><b>86</b> tests</span>
         <span class="mini-stat"><b>3</b> threat rules</span>
       </div>
 

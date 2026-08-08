@@ -45,6 +45,22 @@ The industry's answer to this is **read-only**: scanners and trust scores that
 *tell you* an approval is risky. KeeperHub's own marketplace has
 `token-approval-risk-scanner-*` and `wallet-trust-score-*`. None of them **act**.
 
+**What about the tools that do act?** Two exist and are worth naming, because
+"isn't this already solved?" is the fair question:
+
+- **Harpie** front-runs the drain transaction itself on mainnet — a closed,
+  commercial service you hand monitoring rights to. Revoker removes the
+  *approval* instead of racing the *transfer*, which is a smaller and more
+  reliable thing to win: no gas auction, no mempool race.
+- **OpenZeppelin Defender** (Sentinel + Autotask) can fire condition-triggered
+  transactions, but it is automation plumbing you assemble yourself, not an
+  approval-threat agent.
+
+Revoker is open-source, non-custodial — signing happens in a Turnkey enclave and
+this process never holds a key — and every decision it makes carries its evidence
+into an auditable trail. It is also built on a general execution layer, so the
+same pattern is reusable by any agent that needs to act rather than alert.
+
 ### The Solution
 
 Revoker acts. It watches a wallet's live approval set and, the instant a concrete
@@ -112,19 +128,19 @@ resolution service, and an audit-log pipeline — plus a custody solution.
 KeeperHub signs through a Turnkey enclave, so this process never holds a private
 key.
 
-**10 distinct surfaces across 23 call sites:**
+**10 distinct surfaces across 12 application call sites:**
 
 | Surface | Used for | Where |
 |---|---|---|
 | `POST /api/execute/check-and-execute` | the atomic revoke | `src/revoke.ts` |
-| `POST /api/execute/contract-call` | allowance reads, contract writes | `src/keeperhub.ts` |
+| `POST /api/execute/contract-call` | arming the demo approval, contract writes | `scripts/seed.ts`, `scripts/bench.ts` |
 | `POST /api/execute/transfer` | native transfers | `scripts/spike.ts` |
 | `GET /api/execute/{id}/status` | confirmation, gas, sponsorship, audit record | `src/revoke.ts` |
 | `GET /api/chains` | network + explorer resolution | `scripts/spike.ts` |
 | `GET /api/chains/{id}/abi` | **source-verification signal for threat rule 1** | `src/rules.ts` |
 | `GET /api/user/wallet` | signer identity assertion | `scripts/spike.ts` |
 | `GET /api/user/wallet/balances` | token discovery | `src/watcher.ts` |
-| `simulate: true` | pre-flight dry runs before spending gas | `src/keeperhub.ts` |
+| `simulate: true` | dry-run validation in the integration spike | `scripts/spike.ts` |
 | `Idempotency-Key` | safe retries without double-execution | `src/keeperhub.ts` |
 
 The ABI endpoint is worth calling out: it does not merely fetch ABIs here, it
@@ -145,7 +161,7 @@ The full cycle, executed on Sepolia. Every step is a transaction you can open.
 | # | Step | Transaction | Result |
 |---|---|---|---|
 | 1 | Victim grants `approve(spender, MAX_UINT256)` | [`0xfe39a5f4…017482`](https://sepolia.etherscan.io/tx/0xfe39a5f42d4967548751989c98b0a35971273752e009d90d70c3430d09017482) | allowance = `1.157e77` |
-| 2 | **Revoker fires `approve(spender, 0)`** via `check-and-execute` | [`0x325f6d51…7e09f9`](https://sepolia.etherscan.io/tx/0x325f6d51be89243ed26e8bceba973d41a7a9657addab6d1395210ddfbc7e09f9) | **allowance = 0**, in **11.3s** |
+| 2 | **Revoker fires `approve(spender, 0)`** via `check-and-execute` | [`0x325f6d51…7e09f9`](https://sepolia.etherscan.io/tx/0x325f6d51be89243ed26e8bceba973d41a7a9657addab6d1395210ddfbc7e09f9) | **allowance = 0** |
 | 3 | Drainer fires anyway | [`0xe127f3d2…a1a303`](https://sepolia.etherscan.io/tx/0xe127f3d2e2eb20a9825fbec63c56028815ce145c8cdd9e143a02600e2da1a303) | **takes 0. Funds intact.** |
 
 Step 3 is the one that matters. The drain transaction **succeeded** — it did not
@@ -229,7 +245,7 @@ Full per-cycle transaction links: [BENCHMARK.md](./BENCHMARK.md).
 | KeeperHub client | 14 | 4xx is **not** retried; `isSourceVerified` fails **closed** |
 | Revoke path | 7 | Reports failure when the API claims success but the allowance survives |
 | Audit trail | 8 | bigint serialisation; a broken subscriber cannot stop the loop |
-| Solidity | 42 | **100% coverage** — lines, statements, branches, functions. The drain **succeeds and takes zero** post-revoke; 4 fuzz suites |
+| Solidity | 42 | **100% coverage** — lines, statements, branches, functions. The drain **succeeds and takes zero** post-revoke; 5 fuzz suites |
 | **Total** | **86** | |
 
 CI runs three jobs behind a gate — quality (lint, types, coverage), security

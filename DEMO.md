@@ -171,7 +171,8 @@ result: `response` (detection → confirmed, the agent's own speed) and `exposur
 
 ## 6. Tests — `pnpm test`
 
-15 tests over the three threat rules. The negatives matter most: a verified,
+86 tests — 44 TypeScript (`pnpm test`) and 42 Solidity at 100% coverage
+(`pnpm contracts:test`). The negatives matter most: a verified,
 aged, non-deny-listed spender must raise **no** threat — an agent that cries
 wolf gets turned off.
 
