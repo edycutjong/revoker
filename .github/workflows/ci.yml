@@ -78,16 +78,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Assert no credentials are committed
-        run: |
-          # Belt and braces: an org API key or a raw private key must never
-          # reach this repo. Explorer links and tx hashes are expected and
-          # excluded, since they are 64-hex and would otherwise false-positive.
-          if git grep -InE 'kh_[A-Za-z0-9_-]{20,}|PRIVATE_KEY=0x[0-9a-fA-F]{64}' -- . \
-             | grep -vE 'etherscan\.io|deployTx|transactionHash|0x\.\.\.'; then
-            echo "::error::credential-shaped string found in tracked files"
-            exit 1
-          fi
-          echo "no credentials in tracked files"
+        run: bash scripts/check-no-credentials.sh
 
   contracts:
     name: Contracts — build · test · fuzz

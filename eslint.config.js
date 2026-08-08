@@ -47,4 +47,28 @@ export default tseslint.config(
     files: ['scripts/**/*.ts'],
     rules: { 'no-console': 'off' },
   },
+  {
+    // starter/ is a standalone template: no tsconfig, no dependencies, meant to
+    // be copied out of this repo and run. Type-aware rules cannot resolve it,
+    // so lint it as plain JS rather than excluding it — it ships to users.
+    files: ['starter/**/*.mjs'],
+    ...tseslint.configs.disableTypeChecked,
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: 'module',
+      // Explicitly OFF. Flat config merges the earlier project-wide block into
+      // this one, so projectService stays enabled unless it is turned off here —
+      // and it cannot resolve a file that has no tsconfig.
+      parserOptions: { projectService: false, project: null },
+      globals: { process: 'readonly', console: 'readonly', fetch: 'readonly', setTimeout: 'readonly' },
+    },
+    rules: {
+      // Spread FIRST: a bare `rules` object replaces disableTypeChecked's
+      // rules rather than merging with them, which leaves the type-aware rules
+      // active on a file that has no type information.
+      ...tseslint.configs.disableTypeChecked.rules,
+      'no-console': 'off',
+      'no-empty': 'off',
+    },
+  },
 )

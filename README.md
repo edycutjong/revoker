@@ -16,16 +16,16 @@
   <br/>
 
   [![Live Demo](https://img.shields.io/badge/🌐_Live-Demo-06b6d4?style=for-the-badge)](https://revoker.edycu.dev)
-  [![Demo Video](https://img.shields.io/badge/🎬_Demo-Video-ef4444?style=for-the-badge)](FILL_YOUTUBE_URL)
   [![Pitch Deck](https://img.shields.io/badge/📊_Pitch-Deck-f59e0b?style=for-the-badge)](https://revoker.edycu.dev/pitch.html)
+  [![Demo Video](https://img.shields.io/badge/🎬_Demo-Video-ef4444?style=for-the-badge)](FILL_YOUTUBE_URL)
   [![BUIDL](https://img.shields.io/badge/DoraHacks-BUIDL-8b5cf6?style=for-the-badge)](FILL_BUIDL_URL)
   [![Agents Onchain](https://img.shields.io/badge/Hackathon-Agents_Onchain-6366f1?style=for-the-badge)](https://dorahacks.io/hackathon/agents-onchain)
-  [![Execution layer: KeeperHub](https://img.shields.io/badge/⚡_Execution-KeeperHub-06b6d4?style=for-the-badge)](https://keeperhub.com)
 
   <br/>
 
   ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white)
   ![Node](https://img.shields.io/badge/Node_22-339933?style=flat&logo=node.js&logoColor=white)
+  [![Execution layer: KeeperHub](https://img.shields.io/badge/⚡_Execution-KeeperHub-06b6d4?style=flat)](https://keeperhub.com)
   ![Solidity](https://img.shields.io/badge/Solidity_0.8.28-363636?style=flat&logo=solidity&logoColor=white)
   ![Foundry](https://img.shields.io/badge/Foundry-000000?style=flat)
   ![Ethereum](https://img.shields.io/badge/Sepolia-3C3C3D?style=flat&logo=ethereum&logoColor=white)

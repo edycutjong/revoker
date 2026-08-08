@@ -24,6 +24,24 @@ jobs:
       # which is correct rather than broken. It takes over from the first
       # conventional commit onward; see CONTRIBUTING.md.
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           config-file: .release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # Fully automatic releases: queue the release PR to merge itself once its
+      # checks pass. Auto-merge respects branch protection and required checks,
+      # so this does not bypass CI — it merges when CI is green and not before.
+      # Without this the version only moves when a human remembers to click.
+      - name: Auto-merge the release PR
+        if: ${{ steps.release.outputs.prs_created == 'true' || steps.release.outputs.pr }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NUM=$(echo '${{ steps.release.outputs.pr }}' | python3 -c 'import sys,json;print(json.load(sys.stdin).get("number",""))' 2>/dev/null || true)
+          [ -z "$NUM" ] && NUM=$(gh pr list --state open --search "release-please in:title" --json number -q '.[0].number' 2>/dev/null || true)
+          if [ -n "$NUM" ]; then
+            gh pr merge "$NUM" --squash --auto && echo "auto-merge queued on #$NUM"
+          else
+            echo "no open release PR — nothing to queue"
+          fi
