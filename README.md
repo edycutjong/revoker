@@ -203,9 +203,10 @@ signer address in the `from` field.
 | **response** — detection → revoke confirmed | **12.95s** | 24.88s | 10.33s | 24.95s |
 | **exposure** — threat live → revoke confirmed | **13.38s** | 25.01s | 10.47s | 25.28s |
 
-25/25 cycles succeeded. Gas per revoke was a flat 46,482, sponsored in every
-cycle. Two figures rather than one because conflating the agent's own speed with
-the user's real exposure window would flatter the result.
+25/25 cycles succeeded. Gas per revoke was 46,482 at both p50 and p95 (range
+46,458–46,482 across the run), sponsored in every cycle. Two figures rather than
+one because conflating the agent's own speed with the user's real exposure
+window would flatter the result.
 
 Neither figure includes polling delay — the benchmark triggers detection
 immediately rather than waiting for the timer, so a deployment polling every
