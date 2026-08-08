@@ -761,7 +761,7 @@ in **16.2s** at **52,213 gas**.
 Neither figure includes polling delay — the benchmark triggers detection
 immediately rather than waiting for the timer, so a deployment polling every
 `pollIntervalMs` adds an average of `pollIntervalMs/2` on top. The p95 is nearly
-double the p50 (1.92x) because four consecutive cycles hit a slow block-inclusion
+double the p50 (1.87x) because four consecutive cycles hit a slow block-inclusion
 window; that variance is the network's, not the agent's, which is exactly why
 this is reported as a distribution instead of a headline number.
 
