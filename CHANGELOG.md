@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/edycutjong/revoker/compare/v1.1.1...v1.1.2) (2026-08-08)
+
+
+### Fixes
+
+* **test:** stop audit.test.ts hanging every CI run forever ([#7](https://github.com/edycutjong/revoker/issues/7)) ([56435ba](https://github.com/edycutjong/revoker/commit/56435bac2c3f48bf60c7b1edbc6a1dfa9d98260a))
+
 ## [1.1.1](https://github.com/edycutjong/revoker/compare/v1.1.0...v1.1.1) (2026-08-08)
 
 
