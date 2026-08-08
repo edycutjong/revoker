@@ -45,6 +45,7 @@
   .stat .v { font-family: var(--mono); font-size: 21px; margin-top: 5px; }
   .stat .v.danger { color: var(--danger); }
   .stat .v.ok { color: var(--ok); }
+  .stat .v.warn { color: var(--warn); }
 
   #feed { display: flex; flex-direction: column; gap: 8px; }
   .row {
@@ -57,6 +58,10 @@
   .row.submit  { border-left-color: var(--warn); }
   .row.confirm { border-left-color: var(--ok); }
   .row.fail    { border-left-color: var(--danger); }
+  .row.pending { border-left-color: var(--warn); }
+  /* Abandoned is the loudest row on the page on purpose: it is the only stage
+     that means the agent has stopped trying. */
+  .row.abandon { border-left-color: var(--danger); background: rgba(255,92,92,.07); }
   .row.scan    { border-left-color: var(--line); opacity: .62; }
 
   .row .top { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
@@ -64,8 +69,10 @@
   .row .stage { font-family: var(--mono); font-size: 12px; font-weight: 600; }
   .row.threat  .stage { color: var(--danger); }
   .row.fail    .stage { color: var(--danger); }
+  .row.abandon .stage { color: var(--danger); }
   .row.confirm .stage { color: var(--ok); }
   .row.submit  .stage { color: var(--warn); }
+  .row.pending .stage { color: var(--warn); }
   .row .headline { font-size: 13px; }
   .row .detail {
     margin-top: 7px; font-family: var(--mono); font-size: 11.5px; color: var(--muted);
@@ -95,6 +102,14 @@
     <!-- Four success-only tiles meant the number a judge glances at could never
          go down. Failures belong in the same row as the wins. -->
     <div class="stat"><div class="k">Failures</div><div class="v danger" id="s-failures">0</div></div>
+    <!-- Its own tile rather than a share of Failures: a pending execution may
+         still land, and folding it into the failure count is the false alarm
+         the agent goes out of its way not to raise. -->
+    <div class="stat"><div class="k">Pending</div><div class="v warn" id="s-pending">0</div></div>
+    <!-- The one number that means the agent has STOPPED defending something.
+         Nothing else on this page can say that: every failure tile above is
+         compatible with the agent still trying. -->
+    <div class="stat"><div class="k">Abandoned</div><div class="v danger" id="s-abandoned">0</div></div>
     <div class="stat"><div class="k">Last response</div><div class="v" id="s-latency">—</div></div>
   </div>
   <div id="feed"><div class="empty">Waiting for the agent's first scan…</div></div>
@@ -102,7 +117,7 @@
 
 <script>
 const feed = document.getElementById('feed')
-const stats = { scans: 0, threats: 0, revokes: 0, failures: 0 }
+const stats = { scans: 0, threats: 0, revokes: 0, failures: 0, pending: 0, abandoned: 0 }
 let explorer = 'https://sepolia.etherscan.io'
 
 fetch('/api/meta').then(r => r.json()).then(m => {
@@ -128,14 +143,22 @@ const KIND = {
   'revoke.submit':    ['submit',  'revoke submitted via check-and-execute'],
   'revoke.confirmed': ['confirm', 'REVOKE CONFIRMED — allowance is zero'],
   'revoke.failed':    ['fail',    'revoke failed'],
+  'revoke.pending':   ['pending', 'still pending — NOT confirmed, NOT failed'],
   'revoke.reverted':  ['fail',    'REVOKE REVERTED — allowance still live'],
+  'revoke.abandoned': ['abandon', 'REVOKE ABANDONED — the agent has stopped retrying'],
   'watch.error':      ['fail',    'scan error — exposure not evaluated'],
   'revoke.skipped':   ['scan',    'revoke skipped'],
 }
 
-// Everything that means the agent did NOT get the allowance to zero. Kept as
-// one set so the tile, the row styling and the detail line can never drift
-// apart when a stage is added.
+// Everything that means the agent did NOT get the allowance to zero AND is done
+// trying on this attempt. Kept as one set so the tile, the row styling and the
+// detail line can never drift apart when a stage is added.
+//
+// `revoke.pending` is excluded deliberately: the budget expired while the
+// transaction was still in flight, it may yet land, and counting it here is the
+// false alarm ARCHITECTURE.md promises the agent does not raise.
+// `revoke.abandoned` is excluded because it always FOLLOWS the failed attempt
+// that triggered it — counting both would report every give-up twice.
 const FAILURE = new Set(['revoke.failed', 'revoke.reverted', 'watch.error'])
 
 function render(e) {
@@ -144,6 +167,8 @@ function render(e) {
   if (e.stage === 'watch.scan') stats.scans++
   if (e.stage === 'threat.detected') stats.threats++
   if (FAILURE.has(e.stage)) stats.failures++
+  if (e.stage === 'revoke.pending') stats.pending++
+  if (e.stage === 'revoke.abandoned') stats.abandoned++
   if (e.stage === 'revoke.confirmed') {
     stats.revokes++
     if (e.latencyMs) {
@@ -154,6 +179,8 @@ function render(e) {
   document.getElementById('s-threats').textContent = stats.threats
   document.getElementById('s-revokes').textContent = stats.revokes
   document.getElementById('s-failures').textContent = stats.failures
+  document.getElementById('s-pending').textContent = stats.pending
+  document.getElementById('s-abandoned').textContent = stats.abandoned
 
   // Collapse consecutive quiet scans so the interesting events stay visible.
   if (cls === 'scan' && feed.firstElementChild?.dataset?.stage === e.stage) {
@@ -192,6 +219,17 @@ function render(e) {
     if (e.txHash) {
       detail += `<br><a href="${explorer}/tx/${esc(e.txHash)}" target="_blank" rel="noopener">${esc(e.txHash)}</a>`
     }
+  } else if (e.stage === 'revoke.pending') {
+    // The word "failed" appears nowhere on this row, because it did not.
+    detail += esc(e.reason || '')
+    if (e.escalations !== undefined) detail += `<br>fee escalations <b>${esc(e.escalations)}</b>`
+    if (e.txHash) {
+      detail += `<br><a href="${explorer}/tx/${esc(e.txHash)}" target="_blank" rel="noopener">${esc(e.txHash)}</a>`
+    }
+  } else if (e.stage === 'revoke.abandoned') {
+    if (e.token) detail += `token <b>${esc(short(e.token))}</b> · spender <b>${short(e.spender)}</b><br>`
+    detail += `attempts <b>${esc(e.attempts)}</b> · ${esc(e.reason || '')}`
+    if (e.lastError) detail += `<br>last error: ${esc(e.lastError)}`
   } else if (e.stage === 'revoke.skipped') {
     detail += esc(e.reason || '')
   }

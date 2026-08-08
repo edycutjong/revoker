@@ -26,6 +26,16 @@ const OWNER = '0x5e2e5fd3ad7fdc9b94482930db8b5f45e439bab7' as Address
 const HOSTILE = '0xdeadbeef00000000000000000000000000000001' as Address
 const PERMIT2 = '0x000000000022D473030F116dDEE9F6B43aC78BA3' as Address
 
+/**
+ * The watcher's first retry gap. Mirrored here rather than exported, because a
+ * test that imported the constant would pass even if the production value were
+ * changed to something useless like 1ms — the number is part of the behaviour
+ * under test, not an input to it.
+ */
+const RETRY_BACKOFF_MS = 15_000
+/** Consecutive non-successes on one exposure before the agent gives up. */
+const MAX_ATTEMPTS = 3
+
 /** Chain time the Permit2 tests are anchored to, and a year past it. */
 const NOW = 1_800_000_000
 const FAR_FUTURE = NOW + 365 * 86_400
@@ -282,11 +292,16 @@ describe('Watcher.scan — the revoke decision', () => {
     expect(rules.assess).toHaveBeenCalledTimes(2)
   })
 
-  it('RETRIES on the next scan when the revoke did not take', async () => {
+  it('RETRIES immediately when the revoke was never submitted at all', async () => {
     // The dangerous inverse of the dedupe test. If a revoke is marked handled
     // on the API's say-so, a failure leaves the allowance live and the agent
     // never looks at it again — the wallet is exposed and the log says it is
     // fine. Only a chain-confirmed zero may mark it done.
+    //
+    // `executed: false` with no disposition is the server-side condition
+    // finding the allowance already zero: nothing was submitted and no gas was
+    // spent, so this costs no attempt budget and is retried on the very next
+    // scan rather than being backed off.
     revoke.revokeApproval.mockResolvedValueOnce({ executed: false, allowanceAfter: MAX })
     const w = await makeWatcher()
 
@@ -297,10 +312,22 @@ describe('Watcher.scan — the revoke decision', () => {
   })
 
   it('does not mark handled when the API claims success but the allowance survives', async () => {
-    revoke.revokeApproval.mockResolvedValue({ executed: true, allowanceAfter: MAX })
+    // ...but it IS a spent attempt, so the retry waits out the backoff instead
+    // of firing another transaction on the very next five-second scan.
+    vi.useFakeTimers()
+    revoke.revokeApproval.mockResolvedValue({
+      executed: true,
+      allowanceAfter: MAX,
+      disposition: 'failed',
+      error: 'allowance still non-zero after reported success',
+    })
     const w = await makeWatcher()
 
     await w.scan()
+    await w.scan()
+    expect(revoke.revokeApproval).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(RETRY_BACKOFF_MS)
     await w.scan()
 
     expect(revoke.revokeApproval).toHaveBeenCalledTimes(2)
@@ -645,16 +672,20 @@ describe('Watcher.scan — Permit2 exposures', () => {
     // A batch that lands is not a batch that worked. Marking every pair handled
     // on the transaction's say-so would leave a surviving allowance live with
     // the log claiming it was revoked.
+    vi.useFakeTimers()
     permit2Only([PAIR, PAIR_B])
     revoke.revokePermit2Allowances.mockResolvedValue({
       executed: true,
       allowanceAfter: 500n,
       pairs: [PAIR, PAIR_B],
       cleared: [PAIR],
+      disposition: 'failed',
     })
     const w = await makeWatcher()
 
     await w.scan()
+    // The uncleared slot spent an attempt, so the rebuild waits out its backoff.
+    vi.advanceTimersByTime(RETRY_BACKOFF_MS)
     await w.scan()
 
     expect(
@@ -790,6 +821,352 @@ describe('Watcher.scan — Permit2 exposures', () => {
     await w.scan()
 
     expect(permit2.readPermit2Allowance).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * The bounded-retry ledger.
+ *
+ * The hazard these cover is specific and expensive: before this existed, an
+ * exposure the agent could never actually clear was retried by EVERY scan,
+ * forever. A token that accepts `approve(spender, 0)` and silently ignores it
+ * therefore bought one new gas-spending transaction every five seconds for as
+ * long as the process lived, and nothing in the audit trail ever said so —
+ * every attempt looked like a healthy first attempt.
+ *
+ * Fake timers throughout: the behaviour under test is measured in tens of
+ * seconds, and a suite that waited them out for real would be unrunnable.
+ */
+describe('Watcher — bounded retries and the give-up (ERC-20)', () => {
+  const PAIR_KEY_DETAIL = { token: TOKEN, spender: SPENDER }
+
+  /** A revoke that reports a hard failure — the case that spends the budget. */
+  function failingRevoke(error = 'execution reported failed: reverted upstream') {
+    revoke.revokeApproval.mockResolvedValue({
+      executed: true,
+      allowanceAfter: MAX,
+      disposition: 'failed',
+      error,
+    })
+  }
+
+  /**
+   * Scan `count` times, jumping well past each backoff so every scan really is
+   * an attempt. Ten minutes rather than the exact gap, because these tests are
+   * about the COUNT that triggers a give-up; the widening of the gap itself is
+   * asserted on its own below.
+   */
+  async function burnAttempts(w: { scan: () => Promise<unknown> }, count: number) {
+    for (let i = 0; i < count; i += 1) {
+      await w.scan()
+      vi.advanceTimersByTime(600_000)
+    }
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    chain.fetchApprovals.mockResolvedValue([
+      { token: TOKEN, spender: SPENDER, blockNumber: 11_442_000n },
+    ])
+  })
+
+  it('backs off instead of firing a fresh transaction on every scan', async () => {
+    failingRevoke()
+    const w = await makeWatcher()
+
+    await w.scan()
+    // Six more scans at the 5s poll cadence: thirty seconds of watching, which
+    // spans the 15s backoff exactly once.
+    for (let i = 0; i < 6; i += 1) {
+      vi.advanceTimersByTime(5_000)
+      await w.scan()
+    }
+
+    // Seven scans, TWO transactions. Before the ledger this was seven — one
+    // gas-spending revoke per scan, indefinitely, on an allowance that was
+    // never going to move.
+    expect(revoke.revokeApproval).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries once the backoff has elapsed, and widens it each time', async () => {
+    failingRevoke()
+    const w = await makeWatcher()
+
+    await w.scan()
+    vi.advanceTimersByTime(RETRY_BACKOFF_MS)
+    await w.scan()
+    expect(revoke.revokeApproval).toHaveBeenCalledTimes(2)
+
+    // The second gap is twice the first, so the same jump is no longer enough.
+    vi.advanceTimersByTime(RETRY_BACKOFF_MS)
+    await w.scan()
+    expect(revoke.revokeApproval).toHaveBeenCalledTimes(2)
+
+    vi.advanceTimersByTime(RETRY_BACKOFF_MS)
+    await w.scan()
+    expect(revoke.revokeApproval).toHaveBeenCalledTimes(3)
+  })
+
+  it('ABANDONS after three consecutive failures and never submits again', async () => {
+    failingRevoke('execution reported failed: nothing happened')
+    const w = await makeWatcher()
+
+    await burnAttempts(w, MAX_ATTEMPTS)
+    expect(revoke.revokeApproval).toHaveBeenCalledTimes(MAX_ATTEMPTS)
+
+    // An hour of scanning past the give-up buys not one more transaction.
+    for (let i = 0; i < 20; i += 1) {
+      vi.advanceTimersByTime(180_000)
+      await w.scan()
+    }
+    expect(revoke.revokeApproval).toHaveBeenCalledTimes(MAX_ATTEMPTS)
+  })
+
+  it('records revoke.abandoned once, with the attempt count and the last error', async () => {
+    failingRevoke('execution reported failed: nothing happened')
+    const w = await makeWatcher()
+
+    await burnAttempts(w, MAX_ATTEMPTS + 4)
+
+    const abandoned = readEntries().filter((e) => e.stage === 'revoke.abandoned')
+    // Once, not once per scan: an operator needs to be told the agent stopped,
+    // not reminded of it until the signal is worth nothing.
+    expect(abandoned).toHaveLength(1)
+    expect(abandoned[0]).toMatchObject({
+      ...PAIR_KEY_DETAIL,
+      attempts: MAX_ATTEMPTS,
+      lastError: 'execution reported failed: nothing happened',
+    })
+    expect(String(abandoned[0]?.['reason'])).toContain('no further attempts')
+  })
+
+  it('falls back to the disposition, then to a plain sentence, when no error is given', async () => {
+    // The audit row has to name SOMETHING: an abandoned exposure with a blank
+    // reason is the silence this whole stage exists to break.
+    revoke.revokeApproval.mockResolvedValue({
+      executed: true,
+      allowanceAfter: MAX,
+      disposition: 'reverted',
+    })
+    const w = await makeWatcher()
+    await burnAttempts(w, MAX_ATTEMPTS)
+    expect(readEntries().find((e) => e.stage === 'revoke.abandoned')).toMatchObject({
+      lastError: 'reverted',
+    })
+
+    vi.clearAllMocks()
+    rmSync(join(dir, 'audit.jsonl'), { force: true })
+    revoke.revokeApproval.mockResolvedValue({ executed: true, allowanceAfter: MAX })
+    const bare = await makeWatcher()
+    await burnAttempts(bare, MAX_ATTEMPTS)
+    expect(readEntries().find((e) => e.stage === 'revoke.abandoned')).toMatchObject({
+      lastError: 'allowance is still non-zero',
+    })
+  })
+
+  it('costs an abandoned exposure nothing at all — not even a balance read', async () => {
+    // The gate sits ahead of the rules on purpose. An exposure we have given up
+    // on must not spend an RPC call, an explorer lookup for the verification
+    // rule, or anything else on every five-second cycle for the rest of the run.
+    failingRevoke()
+    const w = await makeWatcher()
+    await burnAttempts(w, MAX_ATTEMPTS)
+
+    chain.readBalance.mockClear()
+    rules.assess.mockClear()
+    vi.advanceTimersByTime(600_000)
+    await w.scan()
+
+    expect(chain.readBalance).not.toHaveBeenCalled()
+    expect(rules.assess).not.toHaveBeenCalled()
+  })
+
+  it('an observed on-chain zero releases the budget, so a later re-grant starts clean', async () => {
+    failingRevoke()
+    const w = await makeWatcher()
+    await burnAttempts(w, MAX_ATTEMPTS)
+
+    // The chain says the allowance is gone — whoever cleared it.
+    chain.readAllowance.mockResolvedValueOnce(0n)
+    vi.advanceTimersByTime(600_000)
+    await w.scan()
+
+    // ...and the same spender is granted MAX again.
+    revoke.revokeApproval.mockClear()
+    chain.readAllowance.mockResolvedValue(MAX)
+    await w.scan()
+
+    expect(revoke.revokeApproval).toHaveBeenCalledTimes(1)
+  })
+
+  it('a NEW Approval log releases the budget; the same log replayed does not', async () => {
+    failingRevoke()
+    const w = await makeWatcher()
+    await burnAttempts(w, MAX_ATTEMPTS)
+    revoke.revokeApproval.mockClear()
+
+    // The sliding window re-delivers the SAME log on every scan. If mere
+    // presence reset the ledger, the give-up would never happen at all.
+    vi.advanceTimersByTime(600_000)
+    await w.scan()
+    expect(revoke.revokeApproval).not.toHaveBeenCalled()
+
+    // A log from a HIGHER block is the chain stating a new approval was
+    // granted: the wallet is freshly exposed and deserves a fresh budget.
+    chain.fetchApprovals.mockResolvedValue([
+      { token: TOKEN, spender: SPENDER, blockNumber: 11_442_900n },
+    ])
+    await w.scan()
+    expect(revoke.revokeApproval).toHaveBeenCalledTimes(1)
+  })
+
+  it('a revoke that worked leaves no half-spent budget behind it', async () => {
+    // Two failures then a success must not leave the exposure one stumble away
+    // from being abandoned the next time it is re-granted — otherwise a single
+    // bad afternoon permanently lowers the bar for giving up on that spender.
+    failingRevoke()
+    const w = await makeWatcher()
+    await burnAttempts(w, 2)
+
+    revoke.revokeApproval.mockResolvedValue({ executed: true, allowanceAfter: 0n })
+    await w.scan()
+    chain.readAllowance.mockResolvedValueOnce(0n)
+    await w.scan() // the chain confirms it, so the exposure is watchable again
+
+    failingRevoke()
+    revoke.revokeApproval.mockClear()
+    await burnAttempts(w, MAX_ATTEMPTS)
+
+    // A FULL three attempts were needed to reach the give-up, not one.
+    expect(revoke.revokeApproval).toHaveBeenCalledTimes(MAX_ATTEMPTS)
+    expect(readEntries().filter((e) => e.stage === 'revoke.abandoned')).toHaveLength(1)
+  })
+})
+
+describe('Watcher — bounded retries and the give-up (Permit2)', () => {
+  const PAIR = { token: TOKEN, spender: SPENDER }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    chain.fetchApprovals.mockResolvedValue([])
+    permit2.fetchPermit2Pairs.mockResolvedValue([PAIR])
+    revoke.revokePermit2Allowances.mockResolvedValue({
+      executed: true,
+      allowanceAfter: MAX_UINT160,
+      pairs: [PAIR],
+      cleared: [],
+      disposition: 'failed',
+      error: 'permit2 allowance still non-zero after reported success',
+    })
+  })
+
+  async function burn(w: { scan: () => Promise<unknown> }, count: number) {
+    for (let i = 0; i < count; i += 1) {
+      await w.scan()
+      vi.advanceTimersByTime(RETRY_BACKOFF_MS * 2 ** i)
+    }
+  }
+
+  it('abandons an unclearable slot instead of locking it down forever', async () => {
+    const w = await makeWatcher()
+    await burn(w, MAX_ATTEMPTS)
+    expect(revoke.revokePermit2Allowances).toHaveBeenCalledTimes(MAX_ATTEMPTS)
+
+    for (let i = 0; i < 10; i += 1) {
+      vi.advanceTimersByTime(300_000)
+      await w.scan()
+    }
+    expect(revoke.revokePermit2Allowances).toHaveBeenCalledTimes(MAX_ATTEMPTS)
+
+    const abandoned = readEntries().filter((e) => e.stage === 'revoke.abandoned')
+    expect(abandoned).toHaveLength(1)
+    expect(abandoned[0]).toMatchObject({ surface: 'permit2', token: TOKEN, spender: SPENDER })
+  })
+
+  it('a skipped batch spends no budget — one stale guard cannot abandon live slots', async () => {
+    // The guard watches ONE slot. If that slot is zeroed elsewhere the whole
+    // batch is skipped without a transaction, and charging that skip would give
+    // up on the live slots queued behind it for a failure that never happened.
+    revoke.revokePermit2Allowances.mockResolvedValue({
+      executed: false,
+      pairs: [PAIR],
+      cleared: [],
+    })
+    const w = await makeWatcher()
+
+    for (let i = 0; i < 6; i += 1) await w.scan()
+
+    expect(revoke.revokePermit2Allowances).toHaveBeenCalledTimes(6)
+    expect(readEntries().filter((e) => e.stage === 'revoke.abandoned')).toHaveLength(0)
+  })
+
+  it('an emptied slot releases the budget', async () => {
+    const w = await makeWatcher()
+    await burn(w, MAX_ATTEMPTS)
+
+    // lockdown finally lands somewhere else: the slot reads zero.
+    permit2.readPermit2Allowance.mockResolvedValueOnce({
+      amount: 0n,
+      expiration: FAR_FUTURE,
+      nonce: 3,
+    })
+    await w.scan()
+
+    // Re-permitted, and attempted again from a clean budget.
+    revoke.revokePermit2Allowances.mockClear()
+    await w.scan()
+    expect(revoke.revokePermit2Allowances).toHaveBeenCalledTimes(1)
+  })
+
+  it('an expired slot releases the budget too', async () => {
+    const w = await makeWatcher()
+    await burn(w, MAX_ATTEMPTS)
+
+    chain.readChainTimeSeconds.mockResolvedValueOnce(FAR_FUTURE + 1)
+    await w.scan()
+
+    revoke.revokePermit2Allowances.mockClear()
+    await w.scan()
+    expect(revoke.revokePermit2Allowances).toHaveBeenCalledTimes(1)
+  })
+
+  it('a re-permit (a higher nonce) releases the budget; the same grant does not', async () => {
+    // Permit2 gives the watcher no log block to compare, so the "is this a NEW
+    // grant?" question is answered off the slot itself: permit() increments the
+    // stored nonce, and a higher one cannot be forged by a stale read.
+    const w = await makeWatcher()
+    await burn(w, MAX_ATTEMPTS)
+    revoke.revokePermit2Allowances.mockClear()
+
+    vi.advanceTimersByTime(600_000)
+    await w.scan()
+    expect(revoke.revokePermit2Allowances).not.toHaveBeenCalled()
+
+    permit2.readPermit2Allowance.mockResolvedValue({
+      amount: MAX_UINT160,
+      expiration: FAR_FUTURE,
+      nonce: 4,
+    })
+    await w.scan()
+    expect(revoke.revokePermit2Allowances).toHaveBeenCalledTimes(1)
+  })
+
+  it('a lengthened expiration also counts as a new grant', async () => {
+    // approve() on Permit2 does not touch the nonce but does rewrite the
+    // expiration, so an extended one is the only signal a re-approved slot has.
+    const w = await makeWatcher()
+    await burn(w, MAX_ATTEMPTS)
+    revoke.revokePermit2Allowances.mockClear()
+
+    permit2.readPermit2Allowance.mockResolvedValue({
+      amount: MAX_UINT160,
+      expiration: FAR_FUTURE + 86_400,
+      nonce: 3,
+    })
+    vi.advanceTimersByTime(600_000)
+    await w.scan()
+
+    expect(revoke.revokePermit2Allowances).toHaveBeenCalledTimes(1)
   })
 })
 

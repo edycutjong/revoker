@@ -52,10 +52,10 @@ flowchart TD
     C -->|any rule fires| E[revoke.ts]
     E --> F[["KeeperHub<br/>POST /api/execute/check-and-execute"]]
     F --> G[re-read guard value<br/>+ approve spender,0 OR lockdown pairs<br/>ONE atomic operation]
-    G --> P[poll to a TERMINAL state<br/>gas ladder 0s / 24s / 48s, budget 75s]
+    G --> P[poll to a TERMINAL state<br/>gas ladder 0s / 30s / 60s, budget 75s]
     P -->|allowance zero on chain| I[revoke.confirmed]
     P -->|receipt reverted| R[revoke.reverted]
-    P -->|no terminal state in budget| J[revoke.failed — pending, retried next scan]
+    P -->|no terminal state in budget| J[revoke.pending — retried next scan]
     I --> K[(audit trail<br/>JSONL + subscriber hook)]
     R --> K
     J --> K
@@ -255,30 +255,70 @@ to a human through the MCP surface where `confirm: true` is a person saying yes.
 ## Landing the transaction, not just submitting it
 
 `check-and-execute` exposes **no fee override** — only `gasLimitMultiplier`. So
-we do not get to name a tip. What we do get is that **the resubmission is the
-bump**: each attempt is re-priced against the current base fee by KeeperHub,
-under a **fresh idempotency key** so the retry cannot be collapsed into the
-original.
+we do not get to name a tip. That is a property of the guarded path
+specifically: KeeperHub's `execute_contract_call` schema carries a
+`priority_fee_gwei`, and `execute_check_and_execute` does not. The only path
+without a TOCTOU window is the only path without tip control, and we take that
+trade every time.
 
 ```
 rung 0   t=0s     first submission,  gasLimitMultiplier 1.2
-rung 1   t=24s    resubmit,          gasLimitMultiplier 1.5     (24s = measured p95)
-rung 2   t=48s    resubmit,          gasLimitMultiplier 2.0
+rung 1   t=30s    resubmit,          gasLimitMultiplier 1.5
+rung 2   t=60s    resubmit,          gasLimitMultiplier 2.0
 give up  t=75s    report "pending" — explicitly NOT "failed"
 ```
 
+30s is two and a half blocks, and sits **above** the slowest healthy response we
+have measured: p95 25.17s, max 26.55s over 25 live cycles (BENCHMARK.md). An
+earlier 24s rung sat *below* both, so more than 5% of perfectly healthy
+executions tripped the ladder and paid for a rung they never needed.
+
+### What the ladder is, and what it is not
+
+An earlier version of this document claimed **"the resubmission IS the fee
+bump"**. That is only true if KeeperHub *replaces* the stranded transaction at
+the **same nonce**. If a resubmission gets a fresh nonce instead, rung 1 queues
+*behind* rung 0 and structurally cannot be mined first — it bumps nothing.
+
+**KeeperHub does not document which of the two it does**, so we no longer claim
+it. The whole published corpus says exactly one thing about nonces — an FAQ line
+listing "transaction retries, nonce management" among its production features —
+and the direct-execution API reference does not mention a nonce anywhere: no
+request field, no response field, nothing on the status endpoint. The live MCP
+schemas match: a caller can neither name a nonce nor ask which one an execution
+used. Each rung is a separate `check-and-execute` under its own idempotency key,
+so each is a separate execution record, and nothing states that KeeperHub folds
+them into one nonce slot.
+
+What the ladder provably buys, assuming nothing at all about nonce handling:
+
+| | |
+|---|---|
+| **A wider gas limit** per retry (1.2 → 1.5 → 2.0) | a fee market that moves under a late inclusion cannot *also* turn it into an out-of-gas revert |
+| **A second guarded attempt**, re-priced by KeeperHub's oracle against the base fee current at that moment | if the retry does get an independent nonce, this is the attempt that can land on its own |
+| **A loser that costs nothing**, when the winner lands first | the server-side `allowance > 0` condition is evaluated *before signing*, so a rung submitted after the allowance is already zero writes nothing and spends nothing |
+
+The honest worst case, stated rather than hidden: if two rungs' conditions are
+*both* evaluated while the allowance is still non-zero, both submit, and the
+second is a no-op `approve(spender, 0)` that still pays its base gas. That is
+bounded by the two rungs above, and it is the price of not having a tip to name.
+
 The agent polls to a **terminal state** and reports four dispositions:
 
-| Disposition | Means |
-|---|---|
-| `confirmed` | receipt succeeded **and** the chain confirms the allowance is zero |
-| `reverted` | the transaction landed and reverted — a fact, not an absence |
-| `failed` | the execution API reported a terminal failure |
-| `pending` | no terminal state inside the 75s budget — still possibly on its way |
+| Disposition | Audit stage | Means |
+|---|---|---|
+| `confirmed` | `revoke.confirmed` | receipt succeeded **and** the chain confirms the allowance is zero |
+| `reverted` | `revoke.reverted` | the transaction landed and reverted — a fact, not an absence |
+| `failed` | `revoke.failed` | the execution API reported a terminal failure |
+| `pending` | `revoke.pending` | no terminal state inside the 75s budget — still possibly on its way |
 
 A merely-pending execution used to be reported as `failed`. It is not the same
 thing, and a sentinel that cries failure at a transaction still in flight trains
-its operator to ignore it.
+its operator to ignore it. `revoke.pending` is its own audit stage for exactly
+that reason: written as `revoke.failed` with a `disposition` field, it was
+counted by the dashboard's failure tile and captioned "revoke failed" on the
+row, which contradicted this page on the one screen anybody actually looks at.
+It is excluded from the dashboard's failure set and has its own tile.
 
 ---
 
@@ -296,7 +336,8 @@ premise is *still watching at 3am* has to survive the night.
 | Rate limit approached | client-side pacing at 60 req/min, before the server has to reject |
 | Revoke reports success but allowance is non-zero | `revoke.failed`, retried next scan |
 | Transaction landed and reverted | `revoke.reverted` — distinguished from never landing |
-| No terminal state within 75s | `pending`, retried next scan, never reported as failed |
+| No terminal state within 75s | `revoke.pending`, retried next scan, **never** reported as failed and never counted as one |
+| Three consecutive non-successes on one exposure | `revoke.abandoned` with the attempt count and the last error; the exposure is dropped from the retry rotation until the chain shows a zero or records a new grant |
 | Allowance already zero at execution time | condition fails, no gas spent, `revoke.skipped` |
 | Archive state unavailable | `young-spender` returns `INDETERMINATE`, never "safe" |
 | Permit2 guard helper not deployed | the Permit2 revoke **throws and refuses to submit** — an unguarded `lockdown()` is never sent |
@@ -307,6 +348,35 @@ zero, so a failed revoke is retried rather than silently dropped. The dedupe
 entry is dropped on an **observed** on-chain zero, which is what lets a later
 re-grant to the same spender be treated as a fresh exposure — before that fix, a
 re-granted approval was invisible for the life of the process.
+
+### Retries are bounded, and giving up is an event
+
+"Retried rather than silently dropped" used to mean *retried forever*: no
+attempt counter, no backoff, no give-up. A token whose `approve()` accepts the
+call and silently ignores it therefore produced **one new gas-spending
+transaction every poll interval, indefinitely** — and every individual attempt
+looked like a healthy first attempt, so nothing in the trail ever said the agent
+was stuck.
+
+Both surfaces now share one attempt ledger:
+
+- **3 consecutive non-successes** per exposure, spaced by an exponential backoff
+  (15s, then 30s) that is several poll intervals wide on purpose.
+- Then `revoke.abandoned`, emitted **once**, carrying the attempt count and the
+  last error, and surfaced as its own tile on `/verify`. Nothing else on that
+  page can say "the agent has stopped defending this".
+- The budget is released only on a **positive fact about the chain**: an
+  observed zero allowance (or an empty/expired Permit2 slot), or a *new* grant.
+  For ERC-20 a new grant is an `Approval` log from a block higher than any seen
+  before — a high-water mark, because the sliding log window re-delivers the
+  same log every scan and resetting on mere presence would restore the unbounded
+  loop under a new name. For Permit2 it is a strictly greater `(nonce,
+  expiration)` read off the slot, since `fetchPermit2Pairs` deliberately returns
+  pairs rather than log values.
+- A revoke that was **never submitted** — the server-side condition found the
+  allowance already zero — is not charged as an attempt. It cost no gas, and on
+  the Permit2 path one stale *guard* slot skips the whole batch, so charging it
+  would abandon the live slots queued behind it.
 
 ---
 

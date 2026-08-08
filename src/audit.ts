@@ -21,8 +21,23 @@ export type AuditStage =
   | 'revoke.submit'
   | 'revoke.confirmed'
   | 'revoke.failed'
+  /**
+   * Submitted, and the landing budget expired while it was still non-terminal.
+   * NOT a failure — the transaction may yet land — and it needs its own stage to
+   * say so. Written as `revoke.failed` with `disposition: 'pending'`, it was
+   * counted by the dashboard's failure tile and labelled "revoke failed" on the
+   * row, which is the exact false alarm ARCHITECTURE.md promises never happens.
+   */
+  | 'revoke.pending'
   /** Submitted and mined, but the transaction reverted. Distinct from never landing. */
   | 'revoke.reverted'
+  /**
+   * The agent has STOPPED retrying this exposure after N consecutive
+   * non-successes. Distinct from `revoke.failed` on purpose: "this attempt did
+   * not work" is routine, "the agent has given up and is no longer defending
+   * this allowance" needs a human, and only one of the two should ever page one.
+   */
+  | 'revoke.abandoned'
   | 'revoke.skipped'
 
 export interface AuditEntry {
@@ -108,7 +123,9 @@ const STAGE_LABEL: Record<AuditStage, string> = {
   'revoke.submit': '↗',
   'revoke.confirmed': '✅',
   'revoke.failed': '❌',
+  'revoke.pending': '⏳',
   'revoke.reverted': '↩',
+  'revoke.abandoned': '🛑',
   'revoke.skipped': '⏭',
   'watch.error': '⚠',
 }

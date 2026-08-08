@@ -181,6 +181,27 @@ describe('logLine', () => {
     spy.mockRestore()
   })
 
+  it('gives every stage in the union a label, including the new ones', async () => {
+    // STAGE_LABEL is a Record over AuditStage, so a missing entry is a compile
+    // error — but only for stages TypeScript can see. This asserts the runtime
+    // side: `revoke.pending` and `revoke.abandoned` print a glyph rather than
+    // the literal text "undefined", which is exactly how the old bogus "scan"
+    // stage announced itself on the console.
+    const { logLine } = await import('../src/audit.js')
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    for (const stage of ['revoke.pending', 'revoke.abandoned'] as const) {
+      logLine({ ts: new Date().toISOString(), stage })
+    }
+
+    const lines = spy.mock.calls.map((c) => c[0] as string)
+    expect(lines).toHaveLength(2)
+    for (const line of lines) expect(line).not.toContain('undefined')
+    expect(lines[0]).toContain('revoke.pending')
+    expect(lines[1]).toContain('revoke.abandoned')
+    spy.mockRestore()
+  })
+
   it('handles null and undefined without throwing', async () => {
     const { audit, logLine } = await import('../src/audit.js')
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {})

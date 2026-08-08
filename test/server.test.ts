@@ -25,6 +25,8 @@ interface CapturedWatcherOptions {
   tokens?: string[]
   denylist?: string[]
   dryRun?: boolean
+  /** Asserted by the /healthz tests: the cadence staleness is measured against. */
+  pollIntervalMs?: number
 }
 
 const httpMock = vi.hoisted(() => {
@@ -72,7 +74,17 @@ const watcherMock = vi.hoisted(() => {
   }
   return { Watcher, instances, run, stop }
 })
-vi.mock('../src/watcher.js', () => ({ Watcher: watcherMock.Watcher }))
+/**
+ * The poll interval is re-exported through the mock rather than invented here:
+ * server.ts both hands it to the Watcher and measures /healthz staleness
+ * against it, and a test that pinned its own number could not catch the two
+ * drifting apart.
+ */
+vi.mock('../src/watcher.js', async (importOriginal) => ({
+  DEFAULT_POLL_INTERVAL_MS: (await importOriginal<typeof import('../src/watcher.js')>())
+    .DEFAULT_POLL_INTERVAL_MS,
+  Watcher: watcherMock.Watcher,
+}))
 
 /**
  * POST /revoke calls straight into the real revoke module, which would reach
@@ -425,6 +437,159 @@ describe('server.ts — routing', () => {
 
     expect(res.writeHead).toHaveBeenCalledWith(404, { 'Content-Type': 'text/plain' })
     expect(res.end).toHaveBeenCalledWith('not found')
+  })
+})
+
+/**
+ * GET /healthz.
+ *
+ * A watcher that has silently stopped inside a live HTTP server is
+ * indistinguishable from a healthy one: the page renders, the SSE stream opens,
+ * /api/meta answers — and /api/meta is static configuration, not a fact about
+ * whether anything is still scanning. These tests pin the one surface that can
+ * tell the difference, including the case that matters most: it must be
+ * possible for it to say NO.
+ */
+describe('server.ts — GET /healthz', () => {
+  /** The watcher's poll cadence, as the health endpoint measures staleness. */
+  const POLL_MS = 5_000
+  const STALE_AFTER_MS = POLL_MS * 3
+
+  function health(listener: (req: IncomingMessage, res: ServerResponse) => void): {
+    status: number
+    body: Record<string, unknown>
+  } {
+    const res = makeRes()
+    listener(makeReq('/healthz'), res as unknown as ServerResponse)
+    return {
+      status: (res.writeHead.mock.calls[0]?.[0] as number) ?? 0,
+      body: JSON.parse(res.end.mock.calls[0]?.[0] as string) as Record<string, unknown>,
+    }
+  }
+
+  it('answers 503 before the watcher has completed its first scan', async () => {
+    // Readiness, not just liveness: a process that has bound a port but never
+    // scanned is not yet doing the job, and must not pass a probe.
+    const listener = await loadServer()
+
+    const { status, body } = health(listener)
+
+    expect(status).toBe(503)
+    expect(body).toMatchObject({ ok: false, watcherAlive: true, lastScanAt: null, scansTotal: 0 })
+    expect(String(body['reason'])).toContain('not completed a scan')
+  })
+
+  it('answers 200 once a scan lands, and counts what happened', async () => {
+    const listener = await loadServer()
+    const { audit } = await import('../src/audit.js')
+
+    audit('watch.scan', { block: 1n })
+    audit('revoke.confirmed', { txHash: '0xabc' })
+    audit('revoke.failed', { terminal: true })
+    audit('revoke.reverted', {})
+    audit('revoke.abandoned', { attempts: 3 })
+
+    const { status, body } = health(listener)
+
+    expect(status).toBe(200)
+    expect(body).toMatchObject({
+      ok: true,
+      watcherAlive: true,
+      scansTotal: 1,
+      revokesConfirmed: 1,
+      revokesFailed: 2,
+      revokesAbandoned: 1,
+    })
+    expect(body['reason']).toBeUndefined()
+    expect(String(body['lastScanAt'])).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    expect(Number(body['secondsSinceLastScan'])).toBeLessThan(1)
+  })
+
+  it('does NOT count a pending revoke as a failure', async () => {
+    // The same contradiction the dashboard just stopped making, in the surface
+    // a monitor reads: a transaction still in flight has not failed.
+    const listener = await loadServer()
+    const { audit } = await import('../src/audit.js')
+
+    audit('watch.scan', {})
+    audit('revoke.pending', { terminal: false, disposition: 'pending' })
+
+    expect((health(listener)).body).toMatchObject({ ok: true, revokesFailed: 0 })
+  })
+
+  it('flips to 503 once the last scan is older than three poll intervals', async () => {
+    // The whole point. A watcher wedged inside a live server changes nothing a
+    // browser can see; it changes this.
+    vi.useFakeTimers()
+    try {
+      const listener = await loadServer()
+      const { audit } = await import('../src/audit.js')
+      audit('watch.scan', {})
+
+      vi.advanceTimersByTime(STALE_AFTER_MS)
+      expect((health(listener)).status).toBe(200)
+
+      vi.advanceTimersByTime(1_000)
+      const { status, body } = health(listener)
+      expect(status).toBe(503)
+      expect(body).toMatchObject({ ok: false, watcherAlive: true, scansTotal: 1 })
+      expect(String(body['reason'])).toContain('staleness ceiling')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('measures staleness against the interval the Watcher was actually given', async () => {
+    // Two copies of the number would be free to drift, and the one that drifted
+    // would be the one deciding whether an outage is reported.
+    const listener = await loadServer()
+    expect(watcherMock.instances.at(-1)?.options.pollIntervalMs).toBe(POLL_MS)
+
+    const { audit } = await import('../src/audit.js')
+    audit('watch.scan', {})
+    expect((health(listener)).body['staleAfterSeconds']).toBe(STALE_AFTER_MS / 1_000)
+  })
+
+  it('reports honestly in replay mode: nothing is watching, whatever the feed shows', async () => {
+    // A recording streams `watch.scan` rows through the very same subscriber.
+    // If those counted as liveness, `pnpm demo:verify` would report a healthy
+    // agent while watching nothing at all — the exact overstatement the replay
+    // banner exists to prevent, restated in JSON.
+    vi.useFakeTimers()
+    try {
+      process.argv = [...originalArgv, '--replay']
+      const listener = await loadServer()
+
+      // Past several rows of the recording, at its 500ms replay cadence.
+      await vi.advanceTimersByTimeAsync(500 * 20)
+
+      const { status, body } = health(listener)
+      expect(status).toBe(503)
+      expect(body).toMatchObject({ ok: false, watcherAlive: false })
+      expect(Number(body['scansTotal'])).toBeGreaterThan(0)
+      expect(String(body['reason'])).toContain('no watcher is running')
+      // The recorded timestamps are passed through, so a recording can never be
+      // mistaken for a fresh scan by the endpoint that exists to detect that.
+      expect(Number(body['secondsSinceLastScan'])).toBeGreaterThan(3_600)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not let a previous run’s trail forge a fresh scan on boot', async () => {
+    // loadHistory() refills the dashboard from the durable JSONL. Routed
+    // through the health counters, yesterday's last `watch.scan` would make a
+    // process that has never scanned once report itself as healthy.
+    writeFileSync(
+      join(dir, 'audit.jsonl'),
+      `${JSON.stringify({ ts: new Date().toISOString(), stage: 'watch.scan', block: '1' })}\n`,
+    )
+
+    const listener = await loadServer()
+
+    const { status, body } = health(listener)
+    expect(status).toBe(503)
+    expect(body).toMatchObject({ scansTotal: 0, lastScanAt: null })
   })
 })
 
@@ -958,6 +1123,50 @@ describe('data/demo-run.jsonl — the recording that ships', () => {
     expect(submits).toBeGreaterThan(terminal)
   })
 
+  /**
+   * The stages that are NOT a win, and which of them this recording actually
+   * carries.
+   *
+   * Named explicitly rather than derived from the file, because the point of
+   * the assertion is that a future edit cannot quietly drop the unflattering
+   * rows and still pass. `submits > terminal` alone did not do that: it stayed
+   * green on a recording with four confirmations and nothing else at all, which
+   * is precisely the highlight reel it was meant to prevent.
+   *
+   * `revoke.skipped` is the only one present, and that is a statement about the
+   * TRAIL, not about what we were willing to ship. audit/revoker.jsonl contains
+   * no genuine `revoke.failed`, `revoke.reverted` or `watch.error` row: every
+   * one of them was written by this suite against placeholder addresses. The
+   * honest move is to ship the real non-win we have and claim nothing more —
+   * fabricating a failure to make the trail look balanced would be the same
+   * dishonesty as hiding one, pointed the other way.
+   */
+  const SHIPPED_NON_WINS = ['revoke.skipped']
+
+  it('ships the real non-win the trail contains, in full context', () => {
+    const stages = entries.map((e) => String(e['stage']))
+    for (const stage of SHIPPED_NON_WINS) expect(stages).toContain(stage)
+
+    // Not a bare row: the detection and the submission that preceded it are
+    // both here, so a judge sees the agent decide, act, and not get its way.
+    const skipped = stages.indexOf('revoke.skipped')
+    expect(stages[skipped - 1]).toBe('revoke.submit')
+    expect(stages[skipped - 2]).toBe('threat.detected')
+    expect(entries[skipped]).toMatchObject({ method: 'permit2-lockdown' })
+    // Asserted on the stable half of the sentence: this row was written before
+    // revoke.ts reworded its guard-zero reason, and the recording is a
+    // historical record. Editing it to match today's string would be the one
+    // thing a verbatim excerpt is not allowed to do.
+    expect(String(entries[skipped]?.['reason'])).toContain('batch rebuilt on the next scan')
+  })
+
+  it('shows the agent NOT firing as well as firing', () => {
+    // threat.cleared is the other half of a defensible record: rules that ran
+    // and did not fire. A recording with no cleared row reads as an agent that
+    // revokes everything it looks at.
+    expect(entries.filter((e) => e['stage'] === 'threat.cleared').length).toBeGreaterThan(0)
+  })
+
   it('contains no test-fixture rows — every line is from a real run', () => {
     // The durable trail interleaves genuine rows with placeholder ones written
     // by the suite. Shipping one of those as evidence would be fabrication.
@@ -967,6 +1176,34 @@ describe('data/demo-run.jsonl — the recording that ships', () => {
       expect(line).not.toContain('0xspender000')
       expect(line).not.toContain('0xowner0000')
       expect(line).not.toContain('"txHash":"0xhash"')
+      // Five rows in the trail carry stage "scan", which is not in the union at
+      // all: they are the output of a since-fixed bug where a detail key spread
+      // over the canonical stage. Shipping one would put a stage the dashboard
+      // cannot label in front of a judge.
+      expect(entry['stage']).not.toBe('scan')
+      // Vitest's module transform leaks its own name into anything a mocked
+      // import threw, which is the cheapest possible tell for a row that came
+      // out of the suite rather than off the chain.
+      expect(line).not.toContain('__vite_ssr_import')
+    }
+  })
+
+  it('carries latencies only a real network round trip could produce', () => {
+    // The fixture rows report 0-2ms because nothing left the process. Every
+    // latency here has to be the cost of an actual API call and an actual
+    // block, or the row is not evidence of anything.
+    const timed = entries.filter((e) => e['latencyMs'] !== undefined)
+    expect(timed.length).toBeGreaterThan(0)
+    for (const entry of timed) expect(Number(entry['latencyMs'])).toBeGreaterThan(100)
+  })
+
+  it('names real addresses everywhere, never a placeholder', () => {
+    for (const entry of entries) {
+      for (const field of ['token', 'spender', 'owner']) {
+        const value = entry[field]
+        if (typeof value !== 'string') continue
+        expect(value).toMatch(/^0x[0-9a-fA-F]{40}$/)
+      }
     }
   })
 })

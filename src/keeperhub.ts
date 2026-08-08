@@ -111,6 +111,57 @@ function parsePollHint(headers: Headers): number | undefined {
   return Number.isFinite(seconds) ? Math.max(0, seconds) * 1000 : undefined
 }
 
+/** The one 409 the platform documents as transient. */
+const IDEMPOTENCY_IN_PROGRESS = 'idempotency_in_progress'
+
+/**
+ * Is this 409 the retryable kind?
+ *
+ * A 409 is normally terminal and must stay that way: `idempotency_conflict`
+ * means the key was reused with a DIFFERENT body, and replaying that is how you
+ * double-execute a write. `idempotency_in_progress` is the documented
+ * exception — it means our own earlier submission of this exact request is
+ * still running, and the docs say in as many words to "retry shortly".
+ *
+ * It matters here because the escalation ladder deliberately resubmits under
+ * derived keys: a rung that raced its own predecessor got a hard 409, and
+ * treating that as terminal threw away a revoke that was already in flight.
+ *
+ * Matched against the serialized body rather than one field, because the error
+ * envelope is not uniform across routes ({code}, {error}, {error:{code}} all
+ * appear in the reference) and no other documented 409 carries this string.
+ */
+function idempotencyInProgress(status: number, body: unknown): boolean {
+  return status === 409 && String(JSON.stringify(body)).includes(IDEMPOTENCY_IN_PROGRESS)
+}
+
+/**
+ * `Retry-After` -> milliseconds to wait, or undefined to fall back to backoff.
+ *
+ * RFC 9110 allows the header to be EITHER delta-seconds or an HTTP-date, and
+ * `Number("Wed, 21 Oct 2026 07:28:00 GMT")` is NaN — so the date form was
+ * silently discarded and the jittered fallback used instead. That is the
+ * opposite of what the header is for: the server named the moment it will be
+ * ready, and we answered by guessing, which is precisely the lockstep retry the
+ * jitter exists to prevent.
+ *
+ * A date already in the past yields undefined rather than a negative or zero
+ * wait: a clock-skewed `Retry-After` must not turn into an instant hammer on a
+ * server that has just asked for room.
+ */
+function retryAfterMs(raw: string | null): number | undefined {
+  if (raw === null) return undefined
+
+  const seconds = Number(raw)
+  if (Number.isFinite(seconds)) return seconds > 0 ? seconds * 1000 : undefined
+
+  const readyAt = Date.parse(raw)
+  if (Number.isNaN(readyAt)) return undefined
+
+  const waitMs = readyAt - Date.now()
+  return waitMs > 0 ? waitMs : undefined
+}
+
 export class KeeperHub {
   #inFlight: number[] = []
 
@@ -192,14 +243,15 @@ export class KeeperHub {
       return parsed as T
     }
 
-    const retryable = response.status === 429 || response.status >= 500
+    const retryable =
+      response.status === 429 ||
+      response.status >= 500 ||
+      idempotencyInProgress(response.status, parsed)
     if (retryable && attempt < 4) {
-      const retryAfter = Number(response.headers.get('Retry-After'))
       // An explicit Retry-After is the server telling us exactly when it will
       // be ready; jittering that would only make us early or late. The
       // computed fallback is the one that needs spreading out.
-      const waitMs =
-        Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : backoffMs(attempt)
+      const waitMs = retryAfterMs(response.headers.get('Retry-After')) ?? backoffMs(attempt)
       await sleep(waitMs)
       return this.#request<T>(path, init, attempt + 1)
     }

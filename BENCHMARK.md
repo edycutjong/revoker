@@ -49,15 +49,19 @@ out-running one.
 
 ## The escalation ladder these figures set
 
-`check-and-execute` exposes no fee override, only `gasLimitMultiplier`, so the
-resubmission *is* the bump: each attempt is re-priced against the current base
-fee under a fresh idempotency key. The 24s rung is taken directly from the p95
-above.
+`check-and-execute` exposes no fee override, only `gasLimitMultiplier`, so each
+retry is a fresh submission re-priced against the current base fee under a fresh
+idempotency key, on a wider gas limit. It is **not** claimed to be a same-nonce
+fee bump — KeeperHub does not document its nonce handling, and ARCHITECTURE.md
+sets out exactly what the ladder does and does not buy.
+
+The first rung sits **above** the max measured here, not on the p95: at 24s,
+more than 5% of perfectly healthy executions would have tripped it.
 
 ```
 rung 0   t=0s     first submission,  gasLimitMultiplier 1.2
-rung 1   t=24s    resubmit,          gasLimitMultiplier 1.5
-rung 2   t=48s    resubmit,          gasLimitMultiplier 2.0
+rung 1   t=30s    resubmit,          gasLimitMultiplier 1.5     (> 26.55s max)
+rung 2   t=60s    resubmit,          gasLimitMultiplier 2.0
 give up  t=75s    report "pending" — explicitly NOT "failed"
 ```
 

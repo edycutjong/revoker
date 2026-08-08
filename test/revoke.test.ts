@@ -391,7 +391,11 @@ describe('revokeApproval — terminal-state polling and fee escalation', () => {
     expect(outcome.disposition).toBe('pending')
     expect(outcome.error).toMatch(/not confirmed, not failed/)
 
-    const entry = stagesOf('revoke.failed').at(-1)!
+    // Its OWN stage. Written as `revoke.failed` with a disposition field, this
+    // was counted by the dashboard's failure tile and captioned "revoke
+    // failed" — the claim ARCHITECTURE.md explicitly promises is never made.
+    expect(stagesOf('revoke.failed')).toHaveLength(0)
+    const entry = stagesOf('revoke.pending').at(-1)!
     expect(entry['terminal']).toBe(false)
     expect(entry['disposition']).toBe('pending')
     expect(entry['reason']).toMatch(/NOT confirmed failed/)
@@ -1057,10 +1061,12 @@ describe('revokePermit2Allowances — the escalation ladder, reused verbatim', (
     ])
 
     // Still pending is NOT failed: the transaction may yet land, and the watcher
-    // leaves the slots unhandled and retries.
+    // leaves the slots unhandled and retries. Same stage, same reasoning as the
+    // ERC-20 path — and no `revoke.failed` row anywhere for the tile to count.
     expect(outcome.disposition).toBe('pending')
     expect(outcome.escalations).toBe(2)
-    expect(stagesOf('revoke.failed').at(-1)).toMatchObject({
+    expect(stagesOf('revoke.failed')).toHaveLength(0)
+    expect(stagesOf('revoke.pending').at(-1)).toMatchObject({
       terminal: false,
       disposition: 'pending',
     })

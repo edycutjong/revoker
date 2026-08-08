@@ -5,7 +5,7 @@ import { config } from './config.js'
 import { audit, auditLogPath, onAudit, type AuditEntry } from './audit.js'
 import { KeeperHub } from './keeperhub.js'
 import { revokeApproval, revokePermit2Allowances } from './revoke.js'
-import { Watcher } from './watcher.js'
+import { DEFAULT_POLL_INTERVAL_MS, Watcher } from './watcher.js'
 
 /**
  * The /verify dashboard.
@@ -56,6 +56,11 @@ const clients = new Set<ServerResponse>()
  * Parsed line by line rather than in one go: a process killed mid-append leaves
  * a torn final line, and losing the whole replay to one bad character would
  * reintroduce exactly the blank page this exists to prevent.
+ *
+ * Deliberately NOT routed through broadcast(): these rows are a previous run's
+ * and must not feed the /healthz counters. A trail whose last `watch.scan` was
+ * written yesterday would otherwise make a process that has never scanned once
+ * report itself as freshly healthy on boot.
  */
 function loadHistory(): void {
   let raw: string
@@ -78,7 +83,90 @@ function loadHistory(): void {
   }
 }
 
+/**
+ * ── GET /healthz — is anything actually still watching? ──────────────────────
+ *
+ * A watcher that has silently stopped inside a live HTTP server is
+ * indistinguishable from a healthy one from the outside: the page still
+ * renders, /api/stream still opens, /api/meta still answers. /api/meta is
+ * static configuration — the wallet, the network, the mode — and says nothing
+ * about whether a scan has happened in the last hour. This is the only surface
+ * that answers the question an operator or an uptime probe actually has.
+ *
+ * The counters ride the audit subscriber the dashboard already uses rather than
+ * new state threaded out of the Watcher, so "a scan happened" has exactly one
+ * definition and it is the same one the durable trail records. It also means
+ * the numbers here and the tiles on /verify can never disagree.
+ */
+const health = {
+  scansTotal: 0,
+  revokesConfirmed: 0,
+  revokesFailed: 0,
+  revokesAbandoned: 0,
+  lastScanAt: undefined as string | undefined,
+}
+
+/** Scans older than this many poll intervals mean the loop is not running. */
+const STALE_SCAN_INTERVALS = 3
+
+function countForHealth(entry: AuditEntry): void {
+  if (entry.stage === 'watch.scan') {
+    health.scansTotal += 1
+    // The entry's OWN timestamp, not Date.now(): during a replay that is the
+    // recorded time, hours in the past, so a recording can never be mistaken
+    // for a fresh scan by the very endpoint that exists to detect staleness.
+    health.lastScanAt = entry.ts
+  }
+  if (entry.stage === 'revoke.confirmed') health.revokesConfirmed += 1
+  // `revoke.pending` is deliberately absent: a pending execution is not a
+  // failure, and counting it as one here would put the contradiction the
+  // dashboard just stopped making back into the machine-readable surface.
+  if (entry.stage === 'revoke.failed' || entry.stage === 'revoke.reverted') {
+    health.revokesFailed += 1
+  }
+  if (entry.stage === 'revoke.abandoned') health.revokesAbandoned += 1
+}
+
+function healthReason(aliveWatcher: boolean, secondsSinceLastScan: number | null): string {
+  if (!aliveWatcher) {
+    return 'no watcher is running in this process — a replay watches nothing and executes nothing'
+  }
+  if (secondsSinceLastScan === null) return 'the watcher has not completed a scan yet'
+  return `last scan was ${secondsSinceLastScan.toFixed(1)}s ago, past the staleness ceiling`
+}
+
+/**
+ * `watcherAlive` states one narrow fact — that this process constructed a
+ * Watcher — and nothing more. Whether that watcher is still making progress is
+ * what `secondsSinceLastScan` answers, and only the two together are health.
+ */
+function handleHealth(res: ServerResponse, watcherAlive: boolean, pollIntervalMs: number): void {
+  const staleAfterSeconds = (STALE_SCAN_INTERVALS * pollIntervalMs) / 1_000
+  const secondsSinceLastScan =
+    health.lastScanAt === undefined ? null : (Date.now() - Date.parse(health.lastScanAt)) / 1_000
+  const fresh = secondsSinceLastScan !== null && secondsSinceLastScan <= staleAfterSeconds
+  const ok = watcherAlive && fresh
+
+  // 503 rather than a 200 carrying `ok: false`, because the consumers that
+  // matter — a container probe, an uptime monitor, `curl -f` — read the status
+  // line and never the body.
+  sendJson(res, ok ? 200 : 503, {
+    ok,
+    watcherAlive,
+    lastScanAt: health.lastScanAt ?? null,
+    secondsSinceLastScan:
+      secondsSinceLastScan === null ? null : Number(secondsSinceLastScan.toFixed(3)),
+    staleAfterSeconds,
+    scansTotal: health.scansTotal,
+    revokesConfirmed: health.revokesConfirmed,
+    revokesFailed: health.revokesFailed,
+    revokesAbandoned: health.revokesAbandoned,
+    ...(ok ? {} : { reason: healthReason(watcherAlive, secondsSinceLastScan) }),
+  })
+}
+
 function broadcast(entry: AuditEntry): void {
+  countForHealth(entry)
   history.push(entry)
   if (history.length > HISTORY_LIMIT) history.shift()
 
@@ -534,6 +622,10 @@ function startWatching(dryRun: boolean): () => void {
     tokens: loadWatchlist(config.chainId),
     denylist: loadDenylist(),
     dryRun,
+    // Passed explicitly, even though it is the watcher's own default, so the
+    // cadence /healthz measures staleness against is provably the cadence the
+    // watcher was given rather than a second copy of the number free to drift.
+    pollIntervalMs: DEFAULT_POLL_INTERVAL_MS,
   })
 
   void watcher.run()
@@ -603,6 +695,14 @@ function main(): void {
           // of an unhandled rejection because one caller hung up mid-answer.
         }
       })
+      return
+    }
+
+    // Routed in every mode, including the replay — where its honest answer is
+    // that nothing is watching. A health endpoint that only exists when the
+    // agent is armed cannot report the outage it exists to report.
+    if (url.pathname === '/healthz') {
+      handleHealth(res, !replay, DEFAULT_POLL_INTERVAL_MS)
       return
     }
 
