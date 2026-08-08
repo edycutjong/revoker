@@ -290,15 +290,26 @@ curl -s -H "Authorization: Bearer $KH_API_KEY" \
   "https://app.keeperhub.com/api/execute/<executionId>/status"
 ```
 
-> **An honest gap, stated rather than filled.** The two reference runs published
-> above — the ERC-20 headline and the Permit2 `lockdown()` — were executed
-> *before* this field was emitted, so their `revoke.confirmed` rows carry
-> `txHash` but no `executionId`, and no id is quoted for them here. Back-filling
-> one would mean inventing an identifier, which on the one artifact whose entire
-> purpose is being trustworthy after the fact is the worst possible trade.
-> The plumbing is covered by tests on both paths and populates from the next
-> live revoke onward; until one is re-run, the KeeperHub-side lookup for these
-> two specific transactions is unavailable and this is the note saying so.
+**A live one you can look up.** This revoke was executed after the field shipped,
+so both halves of the join exist:
+
+| | |
+|---|---|
+| `executionId` | `exsbqbdctjuwlxvrit3ff` |
+| `txHash` | [`0x4167fb56…c26f08`](https://sepolia.etherscan.io/tx/0x4167fb56ad7c3c854c9d258fd2cead71112aaf80d9e652741716294248c26f08) |
+| block | `11445949` |
+
+KeeperHub's own record returns `status: completed`, `receiptStatus: success`,
+`sponsored: true`, `gasUsedWei: 46482` — and that gas figure is byte-identical to
+the one a public RPC reports for the transaction, which is the point: the two
+sources agree without either being asked to vouch for the other.
+
+> **One gap left, stated rather than filled.** The two *earlier* reference runs —
+> the ERC-20 headline sequence and the Permit2 `lockdown()` — were executed before
+> this field was emitted, so their rows carry `txHash` but no `executionId`, and
+> none is quoted for them. Back-filling one would mean inventing an identifier,
+> which on the one artifact whose entire purpose is being trustworthy after the
+> fact is the worst possible trade.
 
 ### The Permit2 lockdown — the grant an ERC-20 watcher cannot see
 
