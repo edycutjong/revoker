@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Revoker — /verify</title>
+<style>
+  :root {
+    --bg: #0a0c10;
+    --panel: #12161d;
+    --line: #1e242e;
+    --text: #e6e9ef;
+    --muted: #7b8494;
+    --accent: #4ea1ff;
+    --danger: #ff5c5c;
+    --ok: #35d07f;
+    --warn: #ffb547;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+  header {
+    padding: 20px 24px; border-bottom: 1px solid var(--line);
+    display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: baseline;
+  }
+  h1 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  .meta { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .meta b { color: var(--text); font-weight: 500; }
+  .status { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.live { background: var(--ok); box-shadow: 0 0 0 0 rgba(53,208,127,.6); animation: pulse 2s infinite; }
+  .dot.armed { background: var(--danger); }
+  @keyframes pulse {
+    to { box-shadow: 0 0 0 10px rgba(53,208,127,0); }
+  }
+
+  main { padding: 20px 24px; max-width: 1100px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 22px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 13px 15px; }
+  .stat .k { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .stat .v { font-family: var(--mono); font-size: 21px; margin-top: 5px; }
+  .stat .v.danger { color: var(--danger); }
+  .stat .v.ok { color: var(--ok); }
+
+  #feed { display: flex; flex-direction: column; gap: 8px; }
+  .row {
+    background: var(--panel); border: 1px solid var(--line); border-left-width: 3px;
+    border-radius: 7px; padding: 11px 14px;
+    animation: slide .28s ease-out;
+  }
+  @keyframes slide { from { opacity: 0; transform: translateY(-6px); } }
+  .row.threat  { border-left-color: var(--danger); }
+  .row.submit  { border-left-color: var(--warn); }
+  .row.confirm { border-left-color: var(--ok); }
+  .row.fail    { border-left-color: var(--danger); }
+  .row.scan    { border-left-color: var(--line); opacity: .62; }
+
+  .row .top { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .row .time { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .row .stage { font-family: var(--mono); font-size: 12px; font-weight: 600; }
+  .row.threat  .stage { color: var(--danger); }
+  .row.confirm .stage { color: var(--ok); }
+  .row.submit  .stage { color: var(--warn); }
+  .row .headline { font-size: 13px; }
+  .row .detail {
+    margin-top: 7px; font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+    word-break: break-all; line-height: 1.7;
+  }
+  .row .detail b { color: var(--text); font-weight: 500; }
+  .rule {
+    display: inline-block; background: rgba(255,92,92,.11); border: 1px solid rgba(255,92,92,.3);
+    color: #ff8f8f; border-radius: 4px; padding: 1px 7px; margin: 3px 5px 0 0; font-size: 11px;
+  }
+  a { color: var(--accent); }
+  .empty { color: var(--muted); padding: 32px 0; text-align: center; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Revoker <span>/verify</span></h1>
+  <div class="meta" id="meta">connecting…</div>
+  <div class="status"><span class="dot" id="dot"></span><span id="conn">connecting</span></div>
+</header>
+
+<main>
+  <div class="stats">
+    <div class="stat"><div class="k">Scans</div><div class="v" id="s-scans">0</div></div>
+    <div class="stat"><div class="k">Threats detected</div><div class="v danger" id="s-threats">0</div></div>
+    <div class="stat"><div class="k">Revokes confirmed</div><div class="v ok" id="s-revokes">0</div></div>
+    <div class="stat"><div class="k">Last response</div><div class="v" id="s-latency">—</div></div>
+  </div>
+  <div id="feed"><div class="empty">Waiting for the agent's first scan…</div></div>
+</main>
+
+<script>
+const feed = document.getElementById('feed')
+const stats = { scans: 0, threats: 0, revokes: 0 }
+let explorer = 'https://sepolia.etherscan.io'
+
+fetch('/api/meta').then(r => r.json()).then(m => {
+  explorer = m.explorer || explorer
+  document.getElementById('meta').innerHTML =
+    `watching <b>${short(m.wallet)}</b> on <b>${m.network}</b> (${m.chainId})`
+  const dot = document.getElementById('dot')
+  if (!m.dryRun) dot.classList.add('armed')
+}).catch(() => {})
+
+function short(a) {
+  return a && a.length > 14 ? a.slice(0, 8) + '…' + a.slice(-6) : (a || '')
+}
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]))
+}
+
+const KIND = {
+  'watch.start':      ['scan',    'agent armed and watching'],
+  'watch.scan':       ['scan',    'scanned approval set'],
+  'threat.detected':  ['threat',  'THREAT DETECTED'],
+  'threat.cleared':   ['scan',    'no rule fired'],
+  'revoke.submit':    ['submit',  'revoke submitted via check-and-execute'],
+  'revoke.confirmed': ['confirm', 'REVOKE CONFIRMED — allowance is zero'],
+  'revoke.failed':    ['fail',    'revoke failed'],
+  'revoke.skipped':   ['scan',    'revoke skipped'],
+}
+
+function render(e) {
+  const [cls, headline] = KIND[e.stage] || ['scan', e.stage]
+
+  if (e.stage === 'watch.scan') stats.scans++
+  if (e.stage === 'threat.detected') stats.threats++
+  if (e.stage === 'revoke.confirmed') {
+    stats.revokes++
+    if (e.latencyMs) {
+      document.getElementById('s-latency').textContent = (e.latencyMs / 1000).toFixed(2) + 's'
+    }
+  }
+  document.getElementById('s-scans').textContent = stats.scans
+  document.getElementById('s-threats').textContent = stats.threats
+  document.getElementById('s-revokes').textContent = stats.revokes
+
+  // Collapse consecutive quiet scans so the interesting events stay visible.
+  if (cls === 'scan' && feed.firstElementChild?.dataset?.stage === e.stage) {
+    feed.firstElementChild.remove()
+  }
+
+  const empty = feed.querySelector('.empty')
+  if (empty) empty.remove()
+
+  const row = document.createElement('div')
+  row.className = 'row ' + cls
+  row.dataset.stage = e.stage
+
+  let detail = ''
+  if (e.stage === 'threat.detected') {
+    detail += `token <b>${esc(e.symbol || short(e.token))}</b> · spender <b>${short(e.spender)}</b><br>`
+    detail += `allowance <b>${esc(e.allowance)}</b> · at risk <b>${esc(e.atRisk)}</b><br>`
+    for (const r of (e.rules || [])) {
+      detail += `<span class="rule">${esc(r.rule)} — ${esc(r.reason)}</span>`
+    }
+  } else if (e.stage === 'revoke.confirmed') {
+    detail += `allowance now <b>0</b> · response <b>${((e.latencyMs||0)/1000).toFixed(2)}s</b>`
+    if (e.gasUsedWei) detail += ` · gas <b>${esc(e.gasUsedWei)}</b>`
+    if (e.sponsored) detail += ` · <b>sponsored</b>`
+    if (e.txHash) {
+      detail += `<br><a href="${explorer}/tx/${esc(e.txHash)}" target="_blank" rel="noopener">${esc(e.txHash)}</a>`
+    }
+  } else if (e.stage === 'watch.scan') {
+    detail += `block <b>${esc(e.block)}</b> · tokens <b>${esc(e.tokensWatched)}</b> · `
+    detail += `approvals <b>${esc(e.approvalEvents)}</b> · exposures <b>${esc(e.distinctExposures)}</b>`
+  } else if (e.stage === 'revoke.failed') {
+    detail += esc(e.error || e.reason || '')
+  } else if (e.stage === 'revoke.skipped') {
+    detail += esc(e.reason || '')
+  }
+
+  row.innerHTML =
+    `<div class="top"><span class="time">${esc((e.ts||'').slice(11,19))}</span>` +
+    `<span class="stage">${esc(e.stage)}</span>` +
+    `<span class="headline">${esc(headline)}</span></div>` +
+    (detail ? `<div class="detail">${detail}</div>` : '')
+
+  feed.prepend(row)
+  while (feed.children.length > 80) feed.lastElementChild.remove()
+}
+
+function connect() {
+  const es = new EventSource('/api/stream')
+  const dot = document.getElementById('dot')
+  const conn = document.getElementById('conn')
+
+  es.onopen = () => { dot.classList.add('live'); conn.textContent = 'live' }
+  es.onmessage = ev => { try { render(JSON.parse(ev.data)) } catch {} }
+  es.onerror = () => {
+    dot.classList.remove('live')
+    conn.textContent = 'reconnecting…'
+    // EventSource reconnects on its own; this only reflects it in the UI.
+  }
+}
+connect()
+</script>
+</body>
+</html>

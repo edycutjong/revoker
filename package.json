@@ -14,7 +14,8 @@
     "watch": "tsx src/index.ts",
     "bench": "tsx scripts/bench.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify": "tsx src/server.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

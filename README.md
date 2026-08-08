@@ -159,10 +159,24 @@ cd contracts && forge build && cd ..
 pnpm spike              # prove the KeeperHub integration end-to-end
 pnpm seed               # stage the threat (idempotent — safe to re-run)
 pnpm watch -- --once    # watch Revoker detect it and take it away
+pnpm verify             # same, with the live dashboard at localhost:3000/verify
+pnpm bench              # p50/p95 over N=25 cycles
 pnpm test               # 15 tests
 ```
 
 `pnpm watch -- --dry-run` detects and reports without executing anything.
+
+### The `/verify` dashboard
+
+`pnpm verify` runs the watcher and streams its audit trail to the browser over
+Server-Sent Events — pushed as decisions happen, not polled. Open
+`http://localhost:3000/verify`, then run `pnpm seed` in another terminal and
+watch the timeline animate: `threat.detected` → `revoke.submit` →
+`revoke.confirmed`, with the Etherscan link rendered the moment it lands.
+
+It is a long-lived process by necessity, not by preference: an agent that
+watches approvals continuously cannot be a serverless function, so `/verify` is
+served from the same process that does the watching.
 
 ### Threat rules
 
