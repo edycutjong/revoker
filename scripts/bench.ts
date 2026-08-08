@@ -53,14 +53,28 @@ interface Cycle {
   txHash: string
 }
 
-/** Nearest-rank percentile. No interpolation — every reported value is one actually observed. */
-function percentile(sorted: number[], p: number): number {
+/**
+ * Nearest-rank percentile. No interpolation — every reported value is one actually observed.
+ *
+ * Exported for the test suite only. The empty-array guards below are unreachable
+ * through main() — `cycles.length === 0` throws before summarize() is ever
+ * called — so the statistics that every headline number in BENCHMARK.md rests on
+ * could not otherwise be tested directly.
+ */
+export function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return Number.NaN
   const rank = Math.ceil((p / 100) * sorted.length)
   return sorted[Math.min(Math.max(rank, 1), sorted.length) - 1]!
 }
 
-function summarize(values: number[]): { p50: number; p95: number; min: number; max: number; mean: number } {
+/** Exported for the test suite only — see percentile(). */
+export function summarize(values: number[]): {
+  p50: number
+  p95: number
+  min: number
+  max: number
+  mean: number
+} {
   const sorted = [...values].sort((a, b) => a - b)
   return {
     p50: percentile(sorted, 50),

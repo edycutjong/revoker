@@ -10,6 +10,8 @@ import { join } from 'node:path'
  *
  * Nothing here ever reads a private key: KeeperHub signs through a Turnkey
  * enclave, so this process only ever holds an API key.
+ *
+ * Set REVOKER_DEMO=1 and none of that is required — see "Demo mode" below.
  */
 
 function parseEnvFile(path: string): Record<string, string> {
@@ -46,18 +48,130 @@ function read(key: string): string | undefined {
   return process.env[key] ?? fileEnv[key]
 }
 
+/**
+ * audit.ts resolves the trail location from `process.env` alone, on purpose: it
+ * is the one module with no dependencies, so a failing config read can never
+ * take the audit log down with it. But .env.example documents
+ * REVOKER_AUDIT_LOG alongside every other key, which promised a resolution
+ * chain that silently did not apply — put it in ~/.config/keeperhub/env and
+ * nothing happened. Publishing the resolved value into process.env here is the
+ * bridge: audit.ts stays dependency-free, and the documentation stops lying.
+ * process.env still wins, so an explicit `export` overrides the file as ever.
+ */
+const auditLogFromFile = fileEnv['REVOKER_AUDIT_LOG']
+if (auditLogFromFile !== undefined && process.env['REVOKER_AUDIT_LOG'] === undefined) {
+  process.env['REVOKER_AUDIT_LOG'] = auditLogFromFile
+}
+
+/**
+ * ── Demo mode ────────────────────────────────────────────────────────────────
+ *
+ * `REVOKER_DEMO=1` lets anyone run the product from a clean `git clone` with no
+ * KeeperHub account. It exists because a single `throw` in this file was the
+ * entire barrier: everything downstream already degrades correctly without
+ * credentials (getHeldTokens swallows its own failure, isSourceVerified fails
+ * closed), so a reviewer could reach the chain, read real Approval logs and see
+ * real exposures — but only after obtaining an organisation API key first.
+ *
+ * The substitutions are UNCONDITIONAL, not fallbacks. Demo mode is the canned
+ * public demo or it is nothing: it must never half-attach to somebody's real
+ * organisation, and "the value you configured was quietly used anyway" is
+ * exactly the surprise that turns a safety guarantee into a probability.
+ */
+const DEMO = Boolean(process.env['REVOKER_DEMO'])
+
+/**
+ * Obviously fake, and fake in a way that cannot be mistaken for a redacted real
+ * key. No KeeperHub organisation will ever accept it, which is the point: with
+ * this key in hand the process can read the public chain and can sign nothing.
+ */
+const DEMO_API_KEY = 'kh_DEMO_MODE_NOT_A_REAL_KEY'
+
+/**
+ * The project's own demo wallet — already public in README.md and
+ * deployments.json, and the account every recorded transaction in
+ * data/demo-run.jsonl was sent from. Nothing here is a secret.
+ */
+const DEMO_WALLET_ADDRESS = '0x5E2e5Fd3aD7fDC9B94482930db8b5F45E439bab7'
+
+/**
+ * Only the two keys the read path needs. DEPLOYER_PRIVATE_KEY is deliberately
+ * absent: `pnpm seed` deploys contracts and arms a live approval, and demo mode
+ * must not make that one command easier to reach by accident.
+ */
+const DEMO_DEFAULTS: Record<string, string | undefined> = {
+  KH_API_KEY: DEMO_API_KEY,
+  KH_WALLET_ADDRESS: DEMO_WALLET_ADDRESS,
+}
+
 function require_(key: string, hint: string): string {
+  const demoDefault = DEMO ? DEMO_DEFAULTS[key] : undefined
+  if (demoDefault !== undefined) return demoDefault
+
   const value = read(key)
   if (!value || value.startsWith('PASTE_')) {
     throw new Error(
       `Missing ${key}. ${hint}\n` +
-        `Set it in your shell, in ~/.config/keeperhub/env, or in a local .env file.`,
+        `Set it in your shell, in ~/.config/keeperhub/env, or in a local .env file.\n` +
+        `Or run with REVOKER_DEMO=1 to use the public demo wallet and execute nothing.`,
     )
   }
   return value
 }
 
+if (DEMO) {
+  /**
+   * The second, independent guarantee.
+   *
+   * A dead API key already makes execution impossible — but "impossible because
+   * the remote signer will reject us" is a property of KeeperHub, not of this
+   * process, and safety that lives on someone else's server is not safety. So
+   * demo mode also forces the local arm switch off.
+   *
+   * Every entrypoint (index.ts, server.ts, mcp.ts) decides ARMED vs DRY RUN by
+   * reading `process.argv`, and every one of them imports this module — which,
+   * under ESM, is fully evaluated before the importing module's own body runs.
+   * Injecting the flag here therefore covers `pnpm demo`, a hand-rolled
+   * `REVOKER_DEMO=1 pnpm watch`, `pnpm verify` and the MCP server alike, rather
+   * than trusting four separate call sites to remember. The demo script's argv
+   * is not the guard; this is.
+   */
+  if (!process.argv.includes('--dry-run')) process.argv.push('--dry-run')
+
+  // stderr, not stdout: src/mcp.ts speaks JSON-RPC over stdout, and a banner
+  // there would corrupt the protocol for any client that ran the demo.
+  console.warn(
+    [
+      '',
+      '  ┌─ REVOKER — DEMO MODE ─────────────────────────────────────────────┐',
+      '  │ REVOKER_DEMO is set. No credentials are configured, and none are  │',
+      '  │ being used — any KH_API_KEY / KH_WALLET_ADDRESS you may have set  │',
+      '  │ is ignored for this process.                                      │',
+      '  │                                                                   │',
+      `  │ KH_API_KEY        ${DEMO_API_KEY.padEnd(48)}│`,
+      `  │ KH_WALLET_ADDRESS ${DEMO_WALLET_ADDRESS.padEnd(48)}│`,
+      '  │                                                                   │',
+      '  │ --dry-run is FORCED ON. This process cannot sign, submit or       │',
+      '  │ execute a transaction. Chain reads against the public Sepolia RPC │',
+      '  │ are real; every write path is disabled.                           │',
+      '  └───────────────────────────────────────────────────────────────────┘',
+      '',
+    ].join('\n'),
+  )
+}
+
 export const config = {
+  /** True when this process is running the credential-free public demo. */
+  demo: DEMO,
+
+  /**
+   * Where the /verify dashboard listens. Documented in .env.example, so it has
+   * to resolve through the same chain as everything else — server.ts used to
+   * read process.env directly, which quietly excluded the two config files the
+   * documentation told you to use.
+   */
+  port: Number(read('PORT') ?? 3000),
+
   /** Organization-scoped KeeperHub API key (kh_ prefix). */
   get apiKey(): string {
     return require_('KH_API_KEY', 'Create one at app.keeperhub.com -> Settings -> API Keys.')

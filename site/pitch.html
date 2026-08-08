@@ -27,7 +27,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Revoker — pitch deck</title>
-<meta name="description" content="Pitch deck for Revoker: the autonomous agent that lands the revoke before the drainer moves. Built for Agents Onchain, KeeperHub's hackathon." />
+<meta name="description" content="Pitch deck for Revoker: autonomous approval hygiene for keeper and agent wallets, executed through KeeperHub. Built for Agents Onchain, KeeperHub's hackathon." />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cdefs%3E%3Cmask id='m'%3E%3Crect width='512' height='512' fill='%23fff'/%3E%3Cline x1='132' y1='380' x2='380' y2='132' stroke='%23000' stroke-width='104' stroke-linecap='round'/%3E%3C/mask%3E%3C/defs%3E%3Crect width='512' height='512' rx='104' fill='%2312161d'/%3E%3Ccircle cx='256' cy='256' r='140' fill='none' stroke='%234ea1ff' stroke-width='60' mask='url(%23m)'/%3E%3Cline x1='132' y1='380' x2='380' y2='132' stroke='%23e6e9ef' stroke-width='46' stroke-linecap='round'/%3E%3C/svg%3E" />
 <style>
 /* ═══════════ tokens — full rebrand in 30s ═══════════
@@ -405,7 +405,7 @@ h2{font-size:72px; line-height:1.06}
     <div class="cover-left">
       <p class="badge"><i aria-hidden="true"></i>Built for Agents Onchain — KeeperHub &times; DoraHacks</p>
       <h1>Revoker</h1>
-      <p class="tagline">Lands the revoke <b>before the drainer moves</b>.</p>
+      <p class="tagline">Takes the approval away <b>before it can be used</b>.</p>
       <p class="cover-term mono"><span class="ps1">$</span>revoker watch<span class="caret" aria-hidden="true"></span></p>
       <p class="cover-meta">TypeScript &middot; Solidity 0.8.28 + Foundry &middot; viem &middot; KeeperHub &middot; Ethereum Sepolia</p>
     </div>
@@ -434,7 +434,7 @@ h2{font-size:72px; line-height:1.06}
       <h2>Every tool stops at the alert.</h2>
       <p class="lede">Approval checkers are read-only: they rate the risk, list the allowance —
         and leave the acting to you. For a wallet holder with forgotten approvals, or a
-        <b>DAO treasury signer asleep at 3&nbsp;a.m.</b>, an alert is not protection.</p>
+        <b>keeper wallet with no human attached</b>, an alert is not protection.</p>
     </div>
     <div class="col-r">
       <div class="alert-mock panel">
@@ -463,12 +463,12 @@ h2{font-size:72px; line-height:1.06}
       <div class="term-bar"><i></i><i></i><i></i><span class="term-title">revoker — watch &middot; Ethereum Sepolia</span></div>
       <div class="term-body">
         <div><span class="ps1">$</span> revoker watch</div>
-        <div><span class="t-mut">watching 0x5E2e&hellip;bab7 &middot; 3 rules armed &middot; signer: Turnkey enclave via KeeperHub</span></div>
+        <div><span class="t-mut">watching 0x5E2e&hellip;bab7 &middot; 4 rules + 1 hold armed &middot; signer: Turnkey enclave via KeeperHub</span></div>
         <div><span class="t-danger">[detect]</span>&nbsp; MockUSDC approval &rarr; 0x8eBf&hellip;892e &middot; allowance = <b>MAX_UINT256</b></div>
         <div><span class="t-danger">[rule]</span>&nbsp;&nbsp;&nbsp; unlimited-to-unverified — <b>FIRED</b> <span class="t-mut">(spender source unverified)</span></div>
         <div><span class="t-danger">[rule]</span>&nbsp;&nbsp;&nbsp; denylisted — <b>FIRED</b> <span class="t-mut">(known-bad spender)</span></div>
         <div><span class="t-warn">[execute]</span> KeeperHub check-and-execute &rarr; approve(spender, 0)</div>
-        <div><span class="t-ok">[confirm]</span> 0x15f0f816&hellip;541a82 &middot; allowance = <b>0</b> &middot; sponsored &middot; <span class="t-mut">no human involved</span></div>
+        <div><span class="t-ok">[confirm]</span> 0xc45a19a6&hellip;a86d7c &middot; allowance = <b>0</b> &middot; sponsored &middot; <span class="t-mut">no human involved</span></div>
       </div>
     </div>
     <aside class="speaker-notes">So we built the missing half: execution. Revoker watches the approval set; the moment a rule fires it calls approve-zero through KeeperHub. No confirmation dialog, no human. This terminal shows the exact run you're about to see proven on-chain — those rule names and that transaction hash are real.</aside>
@@ -484,10 +484,10 @@ h2{font-size:72px; line-height:1.06}
           <span class="pnum" aria-hidden="true">1</span>
           <div class="proof-body">
             <span class="tag danger">The trap</span>
-            <h3>Victim grants unlimited approval</h3>
+            <h3>Keeper wallet grants unlimited approval</h3>
             <p class="p-desc"><code>approve(spender, MAX_UINT256)</code> to the drainer contract.</p>
             <div class="proof-meta">
-              <a class="tx" href="https://sepolia.etherscan.io/tx/0xeb4243d187e95ba606d9ac7d0c6099018238f519753179215a5189bdbafe1113" rel="noopener">0xeb4243d1&hellip;fe1113</a>
+              <a class="tx" href="https://sepolia.etherscan.io/tx/0x99227905d442b68245f5d7858aba34b87c89abd8f268fc1d239b7114f80cda6f" rel="noopener">0x99227905&hellip;0cda6f</a>
               <span class="p-result">allowance = <b>1.157e77</b></span>
             </div>
           </div>
@@ -499,7 +499,7 @@ h2{font-size:72px; line-height:1.06}
             <h3>Revoker fires — no human involved</h3>
             <p class="p-desc"><code>approve(spender, 0)</code> via KeeperHub <code>check-and-execute</code>.</p>
             <div class="proof-meta">
-              <a class="tx" href="https://sepolia.etherscan.io/tx/0x15f0f81626526e7594801d53e6cc3716ea00403b64ca5efac5320203b7541a82" rel="noopener">0x15f0f816&hellip;541a82</a>
+              <a class="tx" href="https://sepolia.etherscan.io/tx/0xc45a19a63808c106db3a3394d130db486fef17b5e920bbd860d6907729a86d7c" rel="noopener">0xc45a19a6&hellip;a86d7c</a>
               <span class="p-result ok">allowance = <b>0</b></span>
             </div>
           </div>
@@ -511,7 +511,7 @@ h2{font-size:72px; line-height:1.06}
             <h3>The drainer fires anyway</h3>
             <p class="p-desc">The drain tx <b>succeeded</b> — it just found nothing left to take.</p>
             <div class="proof-meta">
-              <a class="tx" href="https://sepolia.etherscan.io/tx/0x5579da9988e6fafecf3d78025382cae291237559f12534560133a843106e1e4d" rel="noopener">0x5579da99&hellip;6e1e4d</a>
+              <a class="tx" href="https://sepolia.etherscan.io/tx/0xf0c690494418178f4e0eae105b39835a72a3ae5a4d805a430097d367d8ab3a9d" rel="noopener">0xf0c69049&hellip;8ab3a9d</a>
               <span class="p-result ok">drained: <b>0</b></span>
             </div>
           </div>
@@ -540,7 +540,7 @@ h2{font-size:72px; line-height:1.06}
   <section class="slide" data-title="How it works" aria-label="Slide 6: architecture">
     <p class="eyebrow">How it works</p>
     <h2>One loop. No human.</h2>
-    <svg class="arch" viewBox="0 0 1660 560" role="img" aria-label="Architecture: wallet approval state on Sepolia is polled by the Revoker agent, whose three rules trigger a KeeperHub check-and-execute — allowance re-read and revoke in one atomic operation, signed inside a Turnkey enclave — landing the revoke back on Sepolia; both agent and KeeperHub feed an audit trail into the local verify dashboard.">
+    <svg class="arch" viewBox="0 0 1660 560" role="img" aria-label="Architecture: wallet approval state on Sepolia is polled by the Revoker agent, whose four rules and one hold channel trigger a KeeperHub check-and-execute — allowance re-read and revoke in one atomic operation, signed inside a Turnkey enclave — landing the revoke back on Sepolia; both agent and KeeperHub feed an audit trail into the local verify dashboard.">
       <defs>
         <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0 0L10 5L0 10z" fill="var(--accent)"/>
@@ -598,7 +598,7 @@ h2{font-size:72px; line-height:1.06}
       <rect class="n-box" x="380" y="490" width="930" height="58" rx="12"/>
       <text class="n-sub" x="845" y="526" text-anchor="middle">audit trail — execution id &middot; status &middot; gas &middot; sponsorship &#8594; local /verify dashboard (SSE)</text>
     </svg>
-    <aside class="speaker-notes">The whole system is one loop: read the chain, evaluate three auditable rules — no ML, every firing carries its evidence — and hand execution to KeeperHub. Note what the agent never touches: a private key. Signing happens inside a Turnkey enclave, and every execution lands in an audit trail you can watch live on the local dashboard.</aside>
+    <aside class="speaker-notes">The whole system is one loop: read the chain, evaluate four auditable rules plus a hold channel — no ML, every firing carries its evidence — and hand execution to KeeperHub. Note what the agent never touches: a private key. Signing happens inside a Turnkey enclave, and every execution lands in an audit trail you can watch live on the local dashboard.</aside>
   </section>
 
   <!-- ═══════════════ 7 · THE RACE ═══════════════ -->
@@ -696,10 +696,10 @@ h2{font-size:72px; line-height:1.06}
       block-inclusion window (amber) — <b>the network&rsquo;s variance, reported as a distribution</b>,
       not hidden behind an average.</p>
     <div class="bench-foot">
-      <span><b>86</b> tests — 44 TypeScript &middot; 42 Solidity</span>
+      <span><b>668</b> tests — 580 TypeScript &middot; 54 Solidity &middot; 34 E2E</span>
       <span><b>100%</b> Solidity coverage — lines &middot; statements &middot; branches &middot; functions</span>
     </div>
-    <aside class="speaker-notes">Reliability, measured: twenty-five out of twenty-five cycles, 13.47 seconds median, gas identical at the p50 and p95. The amber bars are four consecutive cycles that hit a slow block window — that's the network, and we report the distribution instead of averaging it away. Behind it: 86 tests and 100 percent Solidity coverage on every axis.</aside>
+    <aside class="speaker-notes">Reliability, measured: twenty-five out of twenty-five cycles, 13.47 seconds median, gas identical at the p50 and p95. The amber bars are four consecutive cycles that hit a slow block window — that's the network, and we report the distribution instead of averaging it away. Behind it: 668 tests, and 100 percent coverage on every axis in both TypeScript and Solidity.</aside>
   </section>
 
   <!-- ═══════════════ 10 · LIMITS ═══════════════ -->

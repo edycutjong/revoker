@@ -30,6 +30,23 @@ export interface ExecutionResult {
   error?: string | null
 }
 
+export interface ExecutionStatus extends ExecutionResult {
+  receipts?: Array<{ hash: string; blockNumber: number; receiptStatus: string; gasUsed: string }>
+  createdAt?: string
+  completedAt?: string
+  retryCount?: number
+  /** Gas is reported as `gasUsedWei` here, not `gasUsed` as on the execute responses. */
+  gasUsedWei?: string
+  gasPriceWei?: string
+  /**
+   * Milliseconds the API asked us to wait before polling again, derived from
+   * the `X-Poll-Interval-Hint` response header. `0` is the API stating the
+   * execution has reached a terminal state. Synthesised by this client — it is
+   * a header, not a body field.
+   */
+  pollAfterMs?: number
+}
+
 export interface SimulationResult {
   success: boolean
   status: 'simulated'
@@ -70,6 +87,81 @@ interface ContractCallInput {
 /** Direct-execution endpoints allow 60 req/min per key. */
 const RATE_LIMIT_PER_MINUTE = 60
 
+/**
+ * Exponential backoff with jitter.
+ *
+ * The jitter is not decoration. Revoker is designed to run as several watchers
+ * against one API key, and a rate limit or an upstream blip hits all of them in
+ * the same second. Without a random factor every instance then retries in the
+ * same millisecond and rebuilds the exact burst that caused the 429 — the
+ * lockstep case is the expected one here, not a corner.
+ */
+function backoffMs(attempt: number): number {
+  return 2 ** attempt * 500 * (0.5 + Math.random())
+}
+
+/**
+ * `X-Poll-Interval-Hint` in seconds -> milliseconds, or undefined when the
+ * header is absent or unparseable so the caller falls back to its own cadence.
+ */
+function parsePollHint(headers: Headers): number | undefined {
+  const raw = headers.get('X-Poll-Interval-Hint')
+  if (raw === null) return undefined
+  const seconds = Number(raw)
+  return Number.isFinite(seconds) ? Math.max(0, seconds) * 1000 : undefined
+}
+
+/** The one 409 the platform documents as transient. */
+const IDEMPOTENCY_IN_PROGRESS = 'idempotency_in_progress'
+
+/**
+ * Is this 409 the retryable kind?
+ *
+ * A 409 is normally terminal and must stay that way: `idempotency_conflict`
+ * means the key was reused with a DIFFERENT body, and replaying that is how you
+ * double-execute a write. `idempotency_in_progress` is the documented
+ * exception — it means our own earlier submission of this exact request is
+ * still running, and the docs say in as many words to "retry shortly".
+ *
+ * It matters here because the escalation ladder deliberately resubmits under
+ * derived keys: a rung that raced its own predecessor got a hard 409, and
+ * treating that as terminal threw away a revoke that was already in flight.
+ *
+ * Matched against the serialized body rather than one field, because the error
+ * envelope is not uniform across routes ({code}, {error}, {error:{code}} all
+ * appear in the reference) and no other documented 409 carries this string.
+ */
+function idempotencyInProgress(status: number, body: unknown): boolean {
+  return status === 409 && String(JSON.stringify(body)).includes(IDEMPOTENCY_IN_PROGRESS)
+}
+
+/**
+ * `Retry-After` -> milliseconds to wait, or undefined to fall back to backoff.
+ *
+ * RFC 9110 allows the header to be EITHER delta-seconds or an HTTP-date, and
+ * `Number("Wed, 21 Oct 2026 07:28:00 GMT")` is NaN — so the date form was
+ * silently discarded and the jittered fallback used instead. That is the
+ * opposite of what the header is for: the server named the moment it will be
+ * ready, and we answered by guessing, which is precisely the lockstep retry the
+ * jitter exists to prevent.
+ *
+ * A date already in the past yields undefined rather than a negative or zero
+ * wait: a clock-skewed `Retry-After` must not turn into an instant hammer on a
+ * server that has just asked for room.
+ */
+function retryAfterMs(raw: string | null): number | undefined {
+  if (raw === null) return undefined
+
+  const seconds = Number(raw)
+  if (Number.isFinite(seconds)) return seconds > 0 ? seconds * 1000 : undefined
+
+  const readyAt = Date.parse(raw)
+  if (Number.isNaN(readyAt)) return undefined
+
+  const waitMs = readyAt - Date.now()
+  return waitMs > 0 ? waitMs : undefined
+}
+
 export class KeeperHub {
   #inFlight: number[] = []
 
@@ -86,7 +178,18 @@ export class KeeperHub {
    */
   async #request<T>(
     path: string,
-    init: { method?: string; body?: unknown; idempotencyKey?: string } = {},
+    init: {
+      method?: string
+      body?: unknown
+      idempotencyKey?: string
+      /**
+       * Called with the headers of the attempt that succeeded. Some control
+       * data travels out of band — `X-Poll-Interval-Hint` on the status
+       * endpoint is the one that matters here — and returning only the parsed
+       * body throws it away.
+       */
+      onHeaders?: (headers: Headers) => void
+    } = {},
     attempt = 0,
   ): Promise<T> {
     await this.#throttle()
@@ -118,7 +221,7 @@ export class KeeperHub {
       })
     } catch (error) {
       if (attempt < 4) {
-        await new Promise((resolve) => setTimeout(resolve, 2 ** attempt * 500))
+        await sleep(backoffMs(attempt))
         return this.#request<T>(path, init, attempt + 1)
       }
       throw new Error(
@@ -135,15 +238,21 @@ export class KeeperHub {
       parsed = text
     }
 
-    if (response.ok) return parsed as T
+    if (response.ok) {
+      init.onHeaders?.(response.headers)
+      return parsed as T
+    }
 
-    const retryable = response.status === 429 || response.status >= 500
+    const retryable =
+      response.status === 429 ||
+      response.status >= 500 ||
+      idempotencyInProgress(response.status, parsed)
     if (retryable && attempt < 4) {
-      const retryAfter = Number(response.headers.get('Retry-After'))
-      const backoffMs = Number.isFinite(retryAfter) && retryAfter > 0
-        ? retryAfter * 1000
-        : 2 ** attempt * 500
-      await sleep(backoffMs)
+      // An explicit Retry-After is the server telling us exactly when it will
+      // be ready; jittering that would only make us early or late. The
+      // computed fallback is the one that needs spreading out.
+      const waitMs = retryAfterMs(response.headers.get('Retry-After')) ?? backoffMs(attempt)
+      await sleep(waitMs)
       return this.#request<T>(path, init, attempt + 1)
     }
 
@@ -306,19 +415,21 @@ export class KeeperHub {
     })
   }
 
-  /** GET /api/execute/{id}/status — audit record, receipts, gas, sponsorship. */
-  async getExecutionStatus(executionId: string): Promise<
-    ExecutionResult & {
-      receipts?: Array<{ hash: string; blockNumber: number; receiptStatus: string; gasUsed: string }>
-      createdAt?: string
-      completedAt?: string
-      retryCount?: number
-      /** Gas is reported as `gasUsedWei` here, not `gasUsed` as on the execute responses. */
-      gasUsedWei?: string
-      gasPriceWei?: string
-    }
-  > {
-    return this.#request(`/api/execute/${executionId}/status`)
+  /**
+   * GET /api/execute/{id}/status — audit record, receipts, gas, sponsorship.
+   *
+   * Also surfaces the `X-Poll-Interval-Hint` header as `pollAfterMs`, because
+   * the docs are explicit that callers should pace on it rather than on a
+   * fixed timer — and that a hint of `0` means the execution is terminal.
+   */
+  async getExecutionStatus(executionId: string): Promise<ExecutionStatus> {
+    let pollAfterMs: number | undefined
+    const status = await this.#request<ExecutionStatus>(`/api/execute/${executionId}/status`, {
+      onHeaders: (headers) => {
+        pollAfterMs = parsePollHint(headers)
+      },
+    })
+    return pollAfterMs === undefined ? status : { ...status, pollAfterMs }
   }
 
   #contractBody(input: ContractCallInput): Record<string, unknown> {

@@ -22,6 +22,10 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
+  // Math.random is spied on by the jitter tests; unstubAllGlobals does not
+  // undo vi.spyOn, and a leaked deterministic Math.random would quietly make
+  // every later backoff assertion meaningless.
+  vi.restoreAllMocks()
 })
 
 /** Runs a request to completion while auto-advancing the backoff timers. */
@@ -82,6 +86,243 @@ describe('KeeperHub retry policy', () => {
       status: 403,
       body: { error: 'Daily spending cap exceeded' },
     })
+  })
+})
+
+/**
+ * Revoker is meant to run as several watchers against one API key, so a rate
+ * limit or an upstream blip hits every instance in the same second. Lockstep
+ * retries would then rebuild the exact burst that caused the 429. These tests
+ * pin the jitter window rather than the mean, because a mean can be right while
+ * every instance still fires at the same instant.
+ */
+describe('KeeperHub backoff jitter', () => {
+  /** Attempt 0's deterministic term is 500ms; jitter scales it by 0.5–1.5. */
+  async function firstBackoff(random: number): Promise<number> {
+    vi.spyOn(Math, 'random').mockReturnValue(random)
+    fetchMock
+      .mockResolvedValueOnce(response(503, { error: 'down' }))
+      .mockResolvedValueOnce(response(200, { hasWallet: true }))
+
+    const settled = kh().getWallet()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    let elapsed = 0
+    while (fetchMock.mock.calls.length < 2 && elapsed < 5_000) {
+      await vi.advanceTimersByTimeAsync(1)
+      elapsed += 1
+    }
+    await settled
+    return elapsed
+  }
+
+  it('waits the LOW end of the window when the jitter roll is minimal', async () => {
+    expect(await firstBackoff(0)).toBe(250)
+  })
+
+  it('waits the HIGH end of the window when the jitter roll is maximal', async () => {
+    // 250ms vs 750ms off the same attempt number is the whole point: two
+    // instances that failed together no longer retry together.
+    expect(await firstBackoff(1)).toBe(750)
+  })
+
+  it('jitters the transport-failure path on the same schedule as a 5xx', async () => {
+    // fetch REJECTING is the same class of problem and must not be the one
+    // path left retrying in lockstep.
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    fetchMock
+      .mockRejectedValueOnce(new Error('ECONNRESET'))
+      .mockResolvedValueOnce(response(200, { hasWallet: true }))
+
+    const settled = kh().getWallet()
+    await vi.advanceTimersByTimeAsync(249)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    await settled
+  })
+
+  it('honours an explicit Retry-After exactly, without jittering it', async () => {
+    // The server named a time. Spreading around it would only make us early.
+    vi.spyOn(Math, 'random').mockReturnValue(1)
+    fetchMock
+      .mockResolvedValueOnce(response(429, { error: 'slow down' }, { 'Retry-After': '2' }))
+      .mockResolvedValueOnce(response(200, { hasWallet: true }))
+
+    const settled = kh().getWallet()
+    await vi.advanceTimersByTimeAsync(1_999)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    await settled
+  })
+
+  /**
+   * RFC 9110 allows Retry-After to be delta-seconds OR an HTTP-date.
+   * `Number("Wed, 21 Oct 2026 07:28:00 GMT")` is NaN, so the date form was
+   * silently discarded and the jittered backoff used instead — the server named
+   * a moment and we answered with a guess, which is exactly the lockstep retry
+   * the jitter exists to break up.
+   */
+  describe('Retry-After as an HTTP-date', () => {
+    it('waits until the named moment instead of falling back to jitter', async () => {
+      // A jitter that would be visibly wrong if the fallback were taken.
+      vi.spyOn(Math, 'random').mockReturnValue(1)
+      const readyAt = new Date(Date.now() + 7_000).toUTCString()
+      fetchMock
+        .mockResolvedValueOnce(response(429, { error: 'slow down' }, { 'Retry-After': readyAt }))
+        .mockResolvedValueOnce(response(200, { hasWallet: true }))
+
+      const settled = kh().getWallet()
+      // toUTCString truncates to whole seconds, so the wait lands inside the
+      // second before the deadline rather than exactly on it.
+      await vi.advanceTimersByTimeAsync(5_999)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1_001)
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      await settled
+    })
+
+    it('falls back to jittered backoff for a date already in the past', async () => {
+      // A skewed clock must not turn "please wait" into an instant hammer.
+      vi.spyOn(Math, 'random').mockReturnValue(0)
+      fetchMock
+        .mockResolvedValueOnce(
+          response(429, { error: 'slow down' }, { 'Retry-After': new Date(0).toUTCString() }),
+        )
+        .mockResolvedValueOnce(response(200, { hasWallet: true }))
+
+      const settled = kh().getWallet()
+      await vi.advanceTimersByTimeAsync(249)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      await settled
+    })
+
+    it('falls back to jittered backoff for a header that is neither', async () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0)
+      fetchMock
+        .mockResolvedValueOnce(response(429, { error: 'slow down' }, { 'Retry-After': 'soon' }))
+        .mockResolvedValueOnce(response(200, { hasWallet: true }))
+
+      const settled = kh().getWallet()
+      await vi.advanceTimersByTimeAsync(250)
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      await settled
+    })
+
+    it('falls back to jittered backoff for a non-positive delta-seconds', async () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0)
+      fetchMock
+        .mockResolvedValueOnce(response(429, { error: 'slow down' }, { 'Retry-After': '0' }))
+        .mockResolvedValueOnce(response(200, { hasWallet: true }))
+
+      const settled = kh().getWallet()
+      await vi.advanceTimersByTimeAsync(250)
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      await settled
+    })
+  })
+
+  /**
+   * A 409 is normally terminal and must stay that way — `idempotency_conflict`
+   * means the key was reused with a DIFFERENT body, and replaying that is how
+   * you double-execute a write. `idempotency_in_progress` is the one the
+   * platform documents as transient ("retry shortly"), and it is the one the
+   * escalation ladder walks into: a rung racing its own predecessor got a hard
+   * 409, and treating that as terminal threw away a revoke already in flight.
+   */
+  describe('409 idempotency', () => {
+    it('retries idempotency_in_progress and succeeds', async () => {
+      fetchMock
+        .mockResolvedValueOnce(response(409, { error: { code: 'idempotency_in_progress' } }))
+        .mockResolvedValueOnce(response(200, { hasWallet: true, walletAddress: '0xabc' }))
+
+      const result = await run(kh().getWallet())
+
+      expect(result.walletAddress).toBe('0xabc')
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('finds the code wherever the envelope puts it', async () => {
+      // The reference is not uniform across routes: {code}, {error} and
+      // {error:{code}} all appear, and a client that matched only one shape
+      // would retry on some routes and give up on others.
+      for (const body of [
+        { code: 'idempotency_in_progress' },
+        { error: 'idempotency_in_progress' },
+        { error: { code: 'idempotency_in_progress', message: 'still running' } },
+      ]) {
+        fetchMock.mockReset()
+        fetchMock
+          .mockResolvedValueOnce(response(409, body))
+          .mockResolvedValueOnce(response(200, { hasWallet: true }))
+
+        await run(kh().getWallet())
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+      }
+    })
+
+    it('does NOT retry idempotency_conflict — the same key with a different body', async () => {
+      fetchMock.mockResolvedValue(
+        response(409, { error: { code: 'idempotency_conflict', originalExecutionId: 'e1' } }),
+      )
+
+      await expect(run(kh().getWallet())).rejects.toThrow(KeeperHubError)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('gives up on a permanently in-progress key rather than retrying forever', async () => {
+      // A fresh Response per call: a body can only be read once, so a shared
+      // instance would fail the second attempt for the wrong reason entirely.
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(response(409, { error: { code: 'idempotency_in_progress' } })),
+      )
+
+      await expect(run(kh().getWallet())).rejects.toThrow(KeeperHubError)
+      // The same 5-attempt ceiling every retryable status gets.
+      expect(fetchMock).toHaveBeenCalledTimes(5)
+    })
+  })
+})
+
+/**
+ * The docs are explicit: poll the status endpoint on the X-Poll-Interval-Hint
+ * header rather than a fixed timer, and treat a hint of 0 as "terminal". The
+ * header is control data that a body-only client throws away.
+ */
+describe('getExecutionStatus poll hint', () => {
+  it('surfaces the X-Poll-Interval-Hint header as milliseconds', async () => {
+    fetchMock.mockResolvedValue(
+      response(200, { executionId: 'e1', status: 'pending' }, { 'X-Poll-Interval-Hint': '3' }),
+    )
+
+    expect((await run(kh().getExecutionStatus('e1'))).pollAfterMs).toBe(3_000)
+  })
+
+  it('preserves a hint of ZERO — the API saying the execution is terminal', async () => {
+    // Must survive as 0 and not collapse to "absent": 0 carries meaning here.
+    fetchMock.mockResolvedValue(
+      response(200, { executionId: 'e1', status: 'completed' }, { 'X-Poll-Interval-Hint': '0' }),
+    )
+
+    expect((await run(kh().getExecutionStatus('e1'))).pollAfterMs).toBe(0)
+  })
+
+  it('omits pollAfterMs entirely when the header is absent', async () => {
+    fetchMock.mockResolvedValue(response(200, { executionId: 'e1', status: 'pending' }))
+
+    expect(await run(kh().getExecutionStatus('e1'))).not.toHaveProperty('pollAfterMs')
+  })
+
+  it('ignores an unparseable hint rather than sleeping for NaN', async () => {
+    fetchMock.mockResolvedValue(
+      response(200, { executionId: 'e1', status: 'pending' }, { 'X-Poll-Interval-Hint': 'soon' }),
+    )
+
+    expect(await run(kh().getExecutionStatus('e1'))).not.toHaveProperty('pollAfterMs')
   })
 })
 

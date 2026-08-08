@@ -185,6 +185,30 @@ describe('index.ts — argument parsing', () => {
     expect(instance?.options.tokens).toEqual([])
     expect(instance?.options.denylist).toEqual([])
   })
+
+  it('degrades to [] when the denylist parses but carries no addresses key', async () => {
+    fsState.denylist = JSON.stringify({ updated: '2026-08-08' })
+
+    await import('../src/index.js')
+    await flushMicrotasks()
+
+    const instance = watcherMock.instances.at(-1)
+    expect(instance?.options.denylist).toEqual([])
+    expect(instance?.options.tokens).toEqual(['0xToken1111111111111111111111111111111111'])
+  })
+
+  it('degrades to [] when the watchlist has no entry for the configured chainId', async () => {
+    fsState.watchlist = JSON.stringify({
+      '1': [{ address: '0xMainnetTokenBBBBBBBBBBBBBBBBBBBBBBBBBBBB' }],
+    })
+
+    await import('../src/index.js')
+    await flushMicrotasks()
+
+    const instance = watcherMock.instances.at(-1)
+    expect(instance?.options.tokens).toEqual([])
+    expect(instance?.options.denylist).toEqual(['0xSpenderAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'])
+  })
 })
 
 describe('index.ts — exit-code behaviour', () => {
@@ -194,6 +218,16 @@ describe('index.ts — exit-code behaviour', () => {
     await import('../src/index.js')
     await flushMicrotasks()
 
+    expect(process.exitCode).toBe(1)
+  })
+
+  it('stringifies a non-Error rejection into the fatal message', async () => {
+    watcherMock.run.mockRejectedValue('RPC exploded, but nobody threw an Error')
+
+    await import('../src/index.js')
+    await flushMicrotasks()
+
+    expect(console.error).toHaveBeenCalledWith('\nfatal: RPC exploded, but nobody threw an Error')
     expect(process.exitCode).toBe(1)
   })
 

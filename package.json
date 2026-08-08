@@ -11,11 +11,17 @@
   "scripts": {
     "spike": "tsx scripts/spike.ts",
     "seed": "tsx scripts/seed.ts",
+    "seed:permit2": "tsx scripts/seed-permit2.ts",
+    "deploy:view": "tsx scripts/deploy-view.ts",
     "watch": "tsx src/index.ts",
+    "workflow:deploy": "tsx scripts/deploy-workflow.ts",
+    "demo": "REVOKER_DEMO=1 tsx src/index.ts --dry-run --once",
+    "demo:verify": "REVOKER_DEMO=1 tsx src/server.ts --replay",
     "bench": "tsx scripts/bench.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p e2e",
     "verify": "tsx src/server.ts",
+    "mcp": "tsx src/mcp.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test:coverage": "vitest run --coverage",
@@ -44,7 +50,9 @@
     "vitest": "^3.2.7"
   },
   "dependencies": {
-    "viem": "^2.21.55"
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "viem": "^2.21.55",
+    "zod": "^3.25.76"
   },
   "pnpm": {
     "overrides": {

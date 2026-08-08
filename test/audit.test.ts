@@ -71,6 +71,22 @@ describe('audit', () => {
     expect(entry!['list']).toEqual(['1', '2'])
   })
 
+  it('never lets a detail key clobber the stage it was called with', async () => {
+    // This is not hypothetical: watcher.ts logged scan failures as
+    // audit('revoke.failed', { stage: 'scan' }). The spread put the detail key
+    // last, so every one of those entries was written with stage "scan" — a
+    // value not in the union. The string "revoke.failed" never appeared, a
+    // filter for it found nothing, STAGE_LABEL['scan'] printed the literal
+    // "undefined", and the dashboard still drew them as failed revokes.
+    const { audit } = await import('../src/audit.js')
+
+    const entry = audit('watch.error', { stage: 'scan', ts: 'not-a-timestamp', error: 'boom' })
+
+    expect(entry.stage).toBe('watch.error')
+    expect(entry.ts).not.toBe('not-a-timestamp')
+    expect(readEntries()[0]).toMatchObject({ stage: 'watch.error', error: 'boom' })
+  })
+
   it('notifies subscribers, and unsubscribes cleanly', async () => {
     const { audit, onAudit } = await import('../src/audit.js')
     const seen: string[] = []
@@ -162,6 +178,27 @@ describe('logLine', () => {
     expect(line).toContain('count=2')
     expect(line).toContain('ok=true')
     expect(line).toContain('reason=spender is deny-listed')
+    spy.mockRestore()
+  })
+
+  it('gives every stage in the union a label, including the new ones', async () => {
+    // STAGE_LABEL is a Record over AuditStage, so a missing entry is a compile
+    // error — but only for stages TypeScript can see. This asserts the runtime
+    // side: `revoke.pending` and `revoke.abandoned` print a glyph rather than
+    // the literal text "undefined", which is exactly how the old bogus "scan"
+    // stage announced itself on the console.
+    const { logLine } = await import('../src/audit.js')
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    for (const stage of ['revoke.pending', 'revoke.abandoned'] as const) {
+      logLine({ ts: new Date().toISOString(), stage })
+    }
+
+    const lines = spy.mock.calls.map((c) => c[0] as string)
+    expect(lines).toHaveLength(2)
+    for (const line of lines) expect(line).not.toContain('undefined')
+    expect(lines[0]).toContain('revoke.pending')
+    expect(lines[1]).toContain('revoke.abandoned')
     spy.mockRestore()
   })
 

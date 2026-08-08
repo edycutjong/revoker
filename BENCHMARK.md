@@ -5,15 +5,20 @@
 
 ## What was measured
 
-Each cycle arms a real unlimited approval on-chain, waits for it to be live,
-evaluates the threat rules against live chain state, and revokes through
+Each cycle arms a real unlimited **ERC-20** approval on-chain, waits for it to be
+live, evaluates the threat rules against live chain state, and revokes through
 KeeperHub's `check-and-execute` — then confirms the allowance is zero by
 reading the chain, not by trusting the execution report.
 
 | Metric | Meaning |
 |---|---|
 | `response` | detection → revoke confirmed on-chain. The agent's own speed. |
-| `exposure` | threat live on-chain → revoke confirmed. What a user experiences. |
+| `exposure` | threat live on-chain → revoke confirmed. What the wallet experiences. |
+
+A cycle counts as succeeded only when the execution reaches a **terminal** state
+*and* the chain confirms the allowance is zero. A pending execution is not
+scored as a success or as a failure — it is reported as pending, which is a
+different fact.
 
 ## Results
 
@@ -35,6 +40,48 @@ default 5s poll that is ~2.5s on top of the figures above.
 Latency is also dominated by block inclusion, which varies with network
 conditions outside our control — hence p50/p95 over 25 cycles
 rather than a single headline number.
+
+It is also not a claim about beating a drainer to the mempool. A drain is one
+transaction, and these figures are far too slow to win that race. What is
+measured here is how fast **policy is enforced once a violation appears** — the
+product bet is on never leaving a standing allowance worth attacking, not on
+out-running one.
+
+## The escalation ladder these figures set
+
+`check-and-execute` exposes no fee override, only `gasLimitMultiplier`, so each
+retry is a fresh submission re-priced against the current base fee under a fresh
+idempotency key, on a wider gas limit. It is **not** claimed to be a same-nonce
+fee bump — KeeperHub does not document its nonce handling, and ARCHITECTURE.md
+sets out exactly what the ladder does and does not buy.
+
+The first rung sits **above** the max measured here, not on the p95: at 24s,
+more than 5% of perfectly healthy executions would have tripped it.
+
+```
+rung 0   t=0s     first submission,  gasLimitMultiplier 1.2
+rung 1   t=30s    resubmit,          gasLimitMultiplier 1.5     (> 26.55s max)
+rung 2   t=60s    resubmit,          gasLimitMultiplier 2.0
+give up  t=75s    report "pending" — explicitly NOT "failed"
+```
+
+None of the 25 cycles below needed a rung.
+
+## The Permit2 path, measured once
+
+Not part of the N=25 above — the benchmark drives the ERC-20 path only. Recorded
+here so the figure has a home:
+
+| What | Value |
+|---|---|
+| revoke primitive | `Permit2.lockdown([(token, spender)])` |
+| detect → confirmed | 16.2s |
+| gas | 52,213 (sponsored) |
+| block | 11445392 |
+| transaction | [`0x20d70cf1…6ba124`](https://sepolia.etherscan.io/tx/0x20d70cf1577f084944931eada7955b5772a5de3553fda890131354d97f6ba124) |
+
+`lockdown()` batches N slots into one transaction, so that gas figure is the
+cost of a whole scan's Permit2 exposures, not of one.
 
 ## Reproduce
 

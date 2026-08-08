@@ -11,6 +11,10 @@
  * The victim is necessarily the org's Turnkey account. approve(spender, 0)
  * clears msg.sender's allowance and nobody else's, and KeeperHub signs only for
  * that account — so it must be the wallet that grants the approval too.
+ *
+ * The approval is armed through the `kh` CLI when it is installed (see
+ * `make arm` for the full operator flow) and through the REST client when it is
+ * not. Both leave the chain in the same state.
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { createWalletClient, http, type Address, type Hex } from 'viem'
@@ -19,6 +23,7 @@ import { sepolia } from 'viem/chains'
 import { config } from '../src/config.js'
 import { KeeperHub } from '../src/keeperhub.js'
 import { MAX_UINT256, publicClient, readAllowance, readBalance, hasCodeAt } from '../src/chain.js'
+import { khArmApproval, khVersion } from './kh-cli.js'
 
 const DEPLOYMENTS_PATH = new URL('../deployments.json', import.meta.url)
 const MINT_AMOUNT = 10_000_000_000n // 10,000 mUSDC at 6 decimals
@@ -142,21 +147,46 @@ async function main(): Promise<void> {
 
   // ---- 3. arm the threat -------------------------------------------------
   // This MUST go through KeeperHub: only it can sign for the Turnkey account.
+  //
+  // Steps 1 and 2 are the throwaway deployer's own transactions, so they stay on
+  // viem — kh signs as the org wallet and could not send them. This one is the
+  // opposite: it is the Turnkey account's approval, it is an operator action
+  // rather than something the agent ever does, and `kh execute contract-call` is
+  // the command a human would type for it. So prefer the CLI and fall back to
+  // the REST client when kh is not installed, rather than making the CLI a
+  // prerequisite for contributing.
   const allowance = await readAllowance(token, victim, spender)
   if (allowance === MAX_UINT256) {
     console.log('  ✓ unlimited approval already live')
   } else {
-    const kh = new KeeperHub()
-    const result = await kh.writeContract({
-      contractAddress: token,
-      functionName: 'approve',
-      functionArgs: [spender, MAX_UINT256.toString()],
-      abi: APPROVE_ABI,
-    })
-    // The write returns before the hash is attached; poll for the record.
-    const status = await kh.getExecutionStatus(result.executionId)
+    const version = khVersion()
+    let transactionHash: string | undefined
+
+    if (version === null) {
+      console.log('  · kh not found — arming over REST (brew install keeperhub/tap/kh)')
+      const kh = new KeeperHub()
+      const result = await kh.writeContract({
+        contractAddress: token,
+        functionName: 'approve',
+        functionArgs: [spender, MAX_UINT256.toString()],
+        abi: APPROVE_ABI,
+      })
+      // The write returns before the hash is attached; poll for the record.
+      const status = await kh.getExecutionStatus(result.executionId)
+      transactionHash = status.transactionHash
+    } else {
+      console.log(`  · arming with ${version}`)
+      const result = khArmApproval({
+        chainId: config.chainId,
+        token,
+        spender,
+        amount: MAX_UINT256.toString(),
+      })
+      transactionHash = result.transactionHash
+    }
+
     console.log(`  + approved MAX_UINT256 -> ${spender}`)
-    console.log(`    ${status.transactionHash}`)
+    console.log(`    ${transactionHash}`)
   }
 
   // ---- 4. report ---------------------------------------------------------

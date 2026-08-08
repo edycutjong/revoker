@@ -14,6 +14,7 @@ const client = vi.hoisted(() => ({
   getLogs: vi.fn(),
   readContract: vi.fn(),
   getCode: vi.fn(),
+  getBlock: vi.fn(),
 }))
 
 vi.mock('viem', async (importOriginal) => {
@@ -30,6 +31,7 @@ const {
   readAllowance,
   readBalance,
   tokenSymbol,
+  readChainTimeSeconds,
   HistoricalStateUnavailable,
   hasCodeAt,
   findDeploymentBlock,
@@ -157,6 +159,19 @@ describe('tokenSymbol', () => {
     // The watcher must still have something human-readable to log, not throw.
     client.readContract.mockRejectedValue(new Error('execution reverted'))
     expect(await tokenSymbol(TOKEN)).toBe(TOKEN.slice(0, 10))
+  })
+})
+
+describe('readChainTimeSeconds', () => {
+  it('returns the latest block timestamp as a Number, not the host clock', async () => {
+    // Permit2 expirations are compared against block.timestamp. Reading the
+    // host clock instead would let a machine whose time has drifted forward
+    // declare live allowances expired and stop watching them — a fail-OPEN
+    // error with no on-chain cause at all.
+    client.getBlock.mockResolvedValue({ timestamp: 1_800_000_000n })
+
+    expect(await readChainTimeSeconds()).toBe(1_800_000_000)
+    expect(client.getBlock).toHaveBeenCalledWith()
   })
 })
 
