@@ -228,7 +228,7 @@ h2{font-size:72px; line-height:1.06}
 .video-chip b{color:var(--text); font-weight:600}
 
 /* ═══════════ slide 6 — architecture ═══════════ */
-.arch{width:100%; height:auto; margin-top:44px}
+.arch{width:100%; height:auto; margin-top:74px}
 .arch .n-box{fill:var(--panel); stroke:var(--line); stroke-width:1.5}
 .arch .n-chip{fill:var(--panel2); stroke:var(--line); stroke-width:1.2}
 .arch .n-title{font:600 25px var(--font-display); fill:var(--text); letter-spacing:-.01em}
@@ -325,7 +325,7 @@ h2{font-size:72px; line-height:1.06}
 .bench-foot b{color:var(--text); font-weight:700}
 
 /* ═══════════ slide 10 — limits ═══════════ */
-.limits-grid{display:grid; grid-template-columns:1fr 1fr; gap:30px 60px; margin-top:52px}
+.limits-grid{display:grid; grid-template-columns:1fr 1fr; gap:72px 70px; margin-top:88px}
 .limit{position:relative; padding:6px 0 6px 74px}
 .limit::before{content:attr(data-n); position:absolute; left:0; top:8px;
   font:700 24px/1 var(--font-mono); color:var(--warn); letter-spacing:.02em;
@@ -576,7 +576,7 @@ h2{font-size:72px; line-height:1.06}
       <text class="n-sub" x="1416" y="296">allowance &#8594; 0</text>
       <text class="n-sub" x="1416" y="324">gas 46,482 (p50)</text>
       <!-- audit trail strip -->
-      <line class="edge-dash" x1="570" y1="435" x2="570" y2="486"/>
+      <line class="edge-dash" x1="580" y1="435" x2="580" y2="486"/>
       <line class="edge-dash" x1="1095" y1="470" x2="1095" y2="486"/>
       <rect class="n-box" x="380" y="490" width="930" height="58" rx="12"/>
       <text class="n-sub" x="845" y="526" text-anchor="middle">audit trail — execution id &middot; status &middot; gas &middot; sponsorship &#8594; local /verify dashboard (SSE)</text>
@@ -637,7 +637,7 @@ h2{font-size:72px; line-height:1.06}
         <p class="kh-copy">Remove KeeperHub and Revoker needs seven separate systems — relayer,
           gas oracle, MEV-protected route, confirmation poller, action discovery, ABI resolution,
           audit pipeline — <b>plus custody</b>. The atomic <code class="mono">check-and-execute</code>
-          and the enclave-held key are the two a standalone script cannot honestly replicate.</p>
+          and the enclave-held key are the two pieces a standalone script cannot honestly replicate.</p>
         <div class="custody">
           <svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 10V7a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="15" r="1.6" fill="currentColor"/></svg>
           <p><b>No key to steal.</b> Signing happens inside a Turnkey enclave via KeeperHub —
@@ -920,8 +920,12 @@ h2{font-size:72px; line-height:1.06}
   });
 
   /* ---------- init (supports #n deep links) ---------- */
-  var start = parseInt((location.hash || '').replace('#', ''), 10);
-  go(isNaN(start) ? 0 : start - 1, true);
+  function fromHash() {
+    var n = parseInt((location.hash || '').replace('#', ''), 10);
+    go(isNaN(n) ? 0 : n - 1, true);
+  }
+  window.addEventListener('hashchange', fromHash);
+  fromHash();
   scale();
 })();
 </script>
