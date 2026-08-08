@@ -598,7 +598,7 @@ h2{font-size:72px; line-height:1.06}
       <rect class="n-box" x="380" y="490" width="930" height="58" rx="12"/>
       <text class="n-sub" x="845" y="526" text-anchor="middle">audit trail — execution id &middot; status &middot; gas &middot; sponsorship &#8594; local /verify dashboard (SSE)</text>
     </svg>
-    <aside class="speaker-notes">The whole system is one loop: read the chain, evaluate three auditable rules — no ML, every firing carries its evidence — and hand execution to KeeperHub. Note what the agent never touches: a private key. Signing happens inside a Turnkey enclave, and every execution lands in an audit trail you can watch live on the local dashboard.</aside>
+    <aside class="speaker-notes">The whole system is one loop: read the chain, evaluate four auditable rules plus a hold channel — no ML, every firing carries its evidence — and hand execution to KeeperHub. Note what the agent never touches: a private key. Signing happens inside a Turnkey enclave, and every execution lands in an audit trail you can watch live on the local dashboard.</aside>
   </section>
 
   <!-- ═══════════════ 7 · THE RACE ═══════════════ -->
@@ -696,10 +696,10 @@ h2{font-size:72px; line-height:1.06}
       block-inclusion window (amber) — <b>the network&rsquo;s variance, reported as a distribution</b>,
       not hidden behind an average.</p>
     <div class="bench-foot">
-      <span><b>86</b> tests — 44 TypeScript &middot; 42 Solidity</span>
+      <span><b>668</b> tests — 580 TypeScript &middot; 54 Solidity &middot; 34 E2E</span>
       <span><b>100%</b> Solidity coverage — lines &middot; statements &middot; branches &middot; functions</span>
     </div>
-    <aside class="speaker-notes">Reliability, measured: twenty-five out of twenty-five cycles, 13.47 seconds median, gas identical at the p50 and p95. The amber bars are four consecutive cycles that hit a slow block window — that's the network, and we report the distribution instead of averaging it away. Behind it: 86 tests and 100 percent Solidity coverage on every axis.</aside>
+    <aside class="speaker-notes">Reliability, measured: twenty-five out of twenty-five cycles, 13.47 seconds median, gas identical at the p50 and p95. The amber bars are four consecutive cycles that hit a slow block window — that's the network, and we report the distribution instead of averaging it away. Behind it: 668 tests, and 100 percent coverage on every axis in both TypeScript and Solidity.</aside>
   </section>
 
   <!-- ═══════════════ 10 · LIMITS ═══════════════ -->
