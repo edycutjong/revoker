@@ -263,11 +263,43 @@ function preflight(wf: WorkflowDefinition): Preflight {
   return { errors, nodes, edges }
 }
 
+/**
+ * Refuse to send credentials anywhere but an HTTPS origin.
+ *
+ * This request carries two secrets at once: the org API key in the
+ * Authorization header, and — inside the body — the workflow definition with
+ * REVOKER_CALLBACK_SECRET already substituted into it. `config.baseUrl` is
+ * read from KH_BASE_URL, so a poisoned environment would hand both to whatever
+ * host it names. CodeQL flags this call as "file data in outbound network
+ * request" for exactly that reason, and it is right to: the flow is real and
+ * intended, so the defence is to constrain the destination rather than to
+ * silence the alert.
+ *
+ * `http://localhost` and `127.0.0.1` stay allowed so the deploy path can be
+ * pointed at a local mock; nothing else may be plaintext.
+ */
+function assertSafeDestination(baseUrl: string): void {
+  let url: URL
+  try {
+    url = new URL(baseUrl)
+  } catch {
+    throw new Error(`KH_BASE_URL is not a valid URL: ${baseUrl}`)
+  }
+  const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1'
+  if (url.protocol !== 'https:' && !loopback) {
+    throw new Error(
+      `refusing to send the API key and the substituted callback secret to a ` +
+        `plaintext origin (${url.origin}). Set KH_BASE_URL to an https:// URL.`,
+    )
+  }
+}
+
 async function api<T>(
   apiKey: string,
   path: string,
   init: { method: string; body?: unknown },
 ): Promise<T> {
+  assertSafeDestination(config.baseUrl)
   const response = await fetch(`${config.baseUrl}${path}`, {
     method: init.method,
     headers: {
