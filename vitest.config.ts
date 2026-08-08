@@ -14,10 +14,28 @@ export default defineConfig({
     exclude: ['node_modules/**', 'e2e/**', 'contracts/**'],
     coverage: {
       provider: 'v8',
-      // Coverage still reports across the whole agent, including files with no
-      // tests — a module at 0% is information, not noise.
+      // Still reported across scripts/ as well, because a module at 0% is
+      // information rather than noise — but only src/ is gated. scripts/ are
+      // one-shot operational entrypoints (seed arms a real approval, spike
+      // proves the integration, bench drives 25 live cycles); they need a funded
+      // wallet and a live API key, and mocking that away would leave a test that
+      // asserts nothing about the thing the script exists to do.
       include: ['src/**/*.ts', 'scripts/**/*.ts'],
       exclude: ['e2e/**', 'contracts/**', 'starter/**'],
+      // A ratchet, not an aspiration: pinned to what the suite actually achieves
+      // today, so the number can only be raised deliberately and never drifts
+      // down unnoticed. Solidity has been hard-gated at 100% since the start
+      // (ci.yml); TypeScript coverage was collected, uploaded and enforced
+      // nowhere — a repo that gates one and quietly publishes the other invites
+      // the obvious question.
+      thresholds: {
+        'src/**/*.ts': {
+          statements: 100,
+          functions: 100,
+          lines: 100,
+          branches: 95,
+        },
+      },
     },
   },
 })

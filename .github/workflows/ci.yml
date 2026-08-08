@@ -18,6 +18,9 @@ jobs:
   quality:
     name: Quality — lint · types · unit tests
     runs-on: ubuntu-latest
+    # Runs after the secret scan: if a credential is in the history, the right
+    # response is to stop and rotate it, not to keep testing.
+    needs: [security]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -85,6 +88,10 @@ jobs:
   contracts:
     name: Contracts — build · test · fuzz
     runs-on: ubuntu-latest
+    # Gated on quality because it is the cheapest signal and shares the same
+    # dependency install. A broken lockfile or a type error would otherwise fail
+    # here too, three minutes later and less legibly.
+    needs: [quality]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -145,6 +152,10 @@ jobs:
   e2e:
     name: E2E — pages · responsive
     runs-on: ubuntu-latest
+    # Gated on quality because it is the cheapest signal and shares the same
+    # dependency install. A broken lockfile or a type error would otherwise fail
+    # here too, three minutes later and less legibly.
+    needs: [quality]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -180,6 +191,10 @@ jobs:
   perf:
     name: Perf — Lighthouse budgets
     runs-on: ubuntu-latest
+    # Gated on quality because it is the cheapest signal and shares the same
+    # dependency install. A broken lockfile or a type error would otherwise fail
+    # here too, three minutes later and less legibly.
+    needs: [quality]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4

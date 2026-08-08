@@ -168,4 +168,123 @@ describe('revokeApproval', () => {
     expect(arg.action.functionName).toBe('approve')
     expect(arg.action.functionArgs).toEqual([SPENDER, '0'])
   })
+
+  // The block below (post-execution verification) decides whether a revoke is
+  // reported as confirmed. check-and-execute's own transactionHash is
+  // provisional; the /status call is the authoritative source, and every
+  // field it can omit must degrade gracefully rather than crash or lie.
+
+  it('skips the status lookup and trusts the inline hash when no executionId comes back', async () => {
+    // Not every check-and-execute response yields an executionId. When none is
+    // given there is nothing to poll, so the API's own hash (if any) is final.
+    const getExecutionStatus = vi.fn()
+    const kh = fakeKh({
+      checkAndExecute: vi.fn().mockResolvedValue({
+        executed: true,
+        transactionHash: '0xinline',
+        condition: { met: true, observedValue: '9', targetValue: '0', operator: 'gt' },
+      }),
+      getExecutionStatus,
+    })
+    vi.mocked(readAllowance).mockResolvedValue(0n)
+
+    const outcome = await revokeApproval({ kh, token: TOKEN, owner: OWNER, spender: SPENDER })
+
+    expect(getExecutionStatus).not.toHaveBeenCalled()
+    expect(outcome.transactionHash).toBe('0xinline')
+    // sponsored/gasUsedWei only ever come from the status poll — with no poll,
+    // neither key should be present on the outcome at all.
+    expect(outcome).not.toHaveProperty('sponsored')
+    expect(outcome).not.toHaveProperty('gasUsedWei')
+  })
+
+  it('falls back to the check-and-execute hash when the status endpoint omits its own', async () => {
+    const kh = fakeKh({
+      checkAndExecute: vi.fn().mockResolvedValue({
+        executed: true,
+        executionId: 'e1',
+        transactionHash: '0xfallback',
+        condition: { met: true, observedValue: '9', targetValue: '0', operator: 'gt' },
+      }),
+      getExecutionStatus: vi.fn().mockResolvedValue({ executionId: 'e1', status: 'completed' }),
+    })
+    vi.mocked(readAllowance).mockResolvedValue(0n)
+
+    const outcome = await revokeApproval({ kh, token: TOKEN, owner: OWNER, spender: SPENDER })
+
+    expect(outcome.transactionHash).toBe('0xfallback')
+    expect(outcome.explorerUrl).toContain('0xfallback')
+  })
+
+  it('reports a confirmed revoke with no hash at all when neither source has one', async () => {
+    // A hash-less confirmation is unusual but must not be fabricated or crash
+    // the outcome — transactionHash/explorerUrl simply stay absent.
+    const kh = fakeKh({
+      checkAndExecute: vi.fn().mockResolvedValue({
+        executed: true,
+        executionId: 'e1',
+        condition: { met: true, observedValue: '9', targetValue: '0', operator: 'gt' },
+      }),
+      getExecutionStatus: vi.fn().mockResolvedValue({ executionId: 'e1', status: 'completed' }),
+    })
+    vi.mocked(readAllowance).mockResolvedValue(0n)
+
+    const outcome = await revokeApproval({ kh, token: TOKEN, owner: OWNER, spender: SPENDER })
+
+    expect(outcome.executed).toBe(true)
+    expect(outcome).not.toHaveProperty('transactionHash')
+    expect(outcome).not.toHaveProperty('explorerUrl')
+  })
+
+  it('omits observedAllowance when check-and-execute reports no condition', async () => {
+    const kh = fakeKh({
+      checkAndExecute: vi.fn().mockResolvedValue({
+        executed: true,
+        executionId: 'e1',
+        // No `condition` key at all — an edge KeeperHub can return.
+      }),
+    })
+    vi.mocked(readAllowance).mockResolvedValue(0n)
+
+    const outcome = await revokeApproval({ kh, token: TOKEN, owner: OWNER, spender: SPENDER })
+
+    expect(outcome).not.toHaveProperty('observedAllowance')
+  })
+
+  it('drops an empty-string gasUsedWei from the status poll rather than reporting a lie', async () => {
+    // Empty string is a falsy-but-defined edge distinct from "field absent" —
+    // the outcome must treat it as "no gas data", not include `gasUsedWei: ''`.
+    const kh = fakeKh({
+      checkAndExecute: vi.fn().mockResolvedValue({
+        executed: true,
+        executionId: 'e1',
+        condition: { met: true, observedValue: '9', targetValue: '0', operator: 'gt' },
+      }),
+      getExecutionStatus: vi.fn().mockResolvedValue({
+        executionId: 'e1',
+        status: 'completed',
+        transactionHash: '0xhash',
+        gasUsedWei: '',
+      }),
+    })
+    vi.mocked(readAllowance).mockResolvedValue(0n)
+
+    const outcome = await revokeApproval({ kh, token: TOKEN, owner: OWNER, spender: SPENDER })
+
+    expect(outcome).not.toHaveProperty('gasUsedWei')
+  })
+
+  it('stringifies a non-Error rejection instead of crashing', async () => {
+    // fetch/JSON layers can reject with something other than an Error (a raw
+    // string, a plain object). The watcher loop must still get a usable
+    // outcome.error rather than an uncaught throw.
+    const kh = fakeKh({
+      checkAndExecute: vi.fn().mockRejectedValue('gateway on fire'),
+    })
+
+    const outcome = await revokeApproval({ kh, token: TOKEN, owner: OWNER, spender: SPENDER })
+
+    expect(outcome.executed).toBe(false)
+    expect(outcome.error).toBe('gateway on fire')
+  })
 })

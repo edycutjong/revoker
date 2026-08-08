@@ -135,7 +135,16 @@ export class HistoricalStateUnavailable extends Error {
 /** True when `address` has contract code at the given block. */
 export async function hasCodeAt(address: Address, blockNumber?: bigint): Promise<boolean> {
   try {
-    const code = await publicClient.getCode({ address, ...(blockNumber ? { blockNumber } : {}) })
+    // `!== undefined`, not truthiness: block 0n is falsy, so a truthy check
+    // silently drops it and asks about CURRENT state instead — the wrong
+    // question, answered without an error. findDeploymentBlock probes
+    // (low + high) / 2n, which is 0n whenever it narrows to the first block, and
+    // this module's whole job is keeping "did not exist then" distinct from
+    // "cannot tell". The catch below already guarded correctly; this did not.
+    const code = await publicClient.getCode({
+      address,
+      ...(blockNumber !== undefined ? { blockNumber } : {}),
+    })
     return code !== undefined && code !== '0x'
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
