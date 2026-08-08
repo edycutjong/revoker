@@ -204,21 +204,18 @@ describe('deployerPrivateKey validation', () => {
   it('rejects a key that is not 32-byte hex', async () => {
     // This guard is what stops the demo-seeding key from ever being mistaken
     // for a real 32-byte secp256k1 key.
-    // gitleaks:allow — synthetic single-character fixture, not a key
     process.env['DEPLOYER_PRIVATE_KEY'] = '0x' + 'a'.repeat(62) // 31 bytes
     const { config } = await import('../src/config.js')
     expect(() => config.deployerPrivateKey).toThrow(/DEPLOYER_PRIVATE_KEY is not a valid 32-byte hex key/)
   })
 
   it('rejects a key missing the 0x prefix', async () => {
-    // gitleaks:allow — synthetic single-character fixture, not a key
     process.env['DEPLOYER_PRIVATE_KEY'] = 'a'.repeat(64)
     const { config } = await import('../src/config.js')
     expect(() => config.deployerPrivateKey).toThrow(/not a valid 32-byte hex key/)
   })
 
   it('accepts a well-formed 32-byte hex key', async () => {
-    // gitleaks:allow — synthetic single-character fixture, not a key
     const key = '0x' + 'f'.repeat(64)
     process.env['DEPLOYER_PRIVATE_KEY'] = key
     const { config } = await import('../src/config.js')
