@@ -385,8 +385,9 @@ section{padding:72px 0; border-top:1px solid var(--line); scroll-margin-top:calc
   padding:10px 14px; font-family:var(--mono); font-size:.82rem}
 .op + .op{margin-top:10px}
 /* the matching index is what makes the two columns comparable at a glance */
-.op-n{flex:0 0 auto; width:17px; height:17px; border-radius:4px; border:1px solid var(--line2);
-  color:var(--muted); font-size:.62rem; font-weight:700; line-height:15px; text-align:center;
+/* .7rem = 11.2px: the index has to clear the 10px floor WAVE flags as "very small text" */
+.op-n{flex:0 0 auto; width:18px; height:18px; border-radius:4px; border:1px solid var(--line2);
+  color:var(--muted); font-size:.7rem; font-weight:700; line-height:16px; text-align:center;
   align-self:center; font-variant-numeric:tabular-nums}
 .op-out{color:var(--muted); margin-left:auto; padding-left:8px}
 .race-gap{border:1.5px dashed var(--danger-line); background:var(--danger-dim); border-radius:8px;
@@ -410,6 +411,9 @@ section{padding:72px 0; border-top:1px solid var(--line); scroll-margin-top:calc
 .observed pre{margin:10px 0 0; padding:12px 16px; background:var(--panel); border:1px solid var(--line);
   border-radius:9px; overflow-x:auto; font-family:var(--mono); font-size:.78rem; color:var(--text)}
 .observed .obs-eq{display:block; margin-top:8px; font-family:var(--mono); font-size:.76rem; color:var(--muted)}
+/* the default `smaller` on <sup> drops the 256 to 8.3px in a mono stack — WAVE reads
+   anything under 10px as very small text, so size the exponent explicitly. */
+.observed .obs-eq sup{font-size:.86em; vertical-align:.42em; line-height:0}
 /* the Permit2 section reuses .race, .mini-stats and the benchmark table wholesale;
    only the vertical rhythm between those borrowed blocks needs saying */
 #permit2 .mini-stats{margin:30px 0 22px}
