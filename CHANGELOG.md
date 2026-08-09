@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.3](https://github.com/edycutjong/revoker/compare/v1.7.2...v1.7.3) (2026-08-09)
+
+
+### Fixes
+
+* **site:** lift two text runs above the 10px legibility floor ([#38](https://github.com/edycutjong/revoker/issues/38)) ([322468e](https://github.com/edycutjong/revoker/commit/322468e07bcdb24dc703e2eef5023511ce8385e7))
+
 ## [1.7.2](https://github.com/edycutjong/revoker/compare/v1.7.1...v1.7.2) (2026-08-08)
 
 
