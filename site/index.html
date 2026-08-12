@@ -617,10 +617,11 @@ td.hot{color:var(--text); font-weight:700}
     <div class="container">
       <p class="eyebrow">Autonomous on-chain security agent · built on KeeperHub</p>
       <h1 id="hero-h">The agent that takes the approval away before it can be used.</h1>
-      <p class="sub">Token approvals are the most common wallet-drain vector, and every tool built
-        for them is read-only: it tells you an approval is risky, and stops there.
-        <span class="turn">Revoker acts.</span> The moment a threat rule fires it executes
-        <code>approve(spender,&nbsp;0)</code> through KeeperHub, with no human in the loop.</p>
+      <p class="sub">Token approvals are the most common wallet-drain vector, and the tools that
+        revoke them automatically all start the same way: a human connects a wallet.
+        <span class="turn">A&nbsp;keeper wallet never can.</span> Revoker is a self-hosted policy engine
+        for wallets with no human at all &mdash; the moment a threat rule fires it executes
+        <code>approve(spender,&nbsp;0)</code> through KeeperHub.</p>
       <div class="cta-row">
         <a class="btn btn-primary" href="#proof">See the drain stopped</a>
         <a class="btn btn-ghost" href="https://github.com/edycutjong/revoker" rel="noopener"><svg class="gh-mark" viewBox="0 0 16 16" width="1em" height="1em" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.011.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>View source on GitHub<span aria-hidden="true">&nbsp;&#8599;</span></a>
@@ -1014,8 +1015,8 @@ td.hot{color:var(--text); font-weight:700}
 
       <div class="mini-stats">
         <span class="mini-stat"><b>11</b> distinct API surfaces</span>
-        <span class="mini-stat"><b>22</b> application call sites</span>
-        <span class="mini-stat"><b>668</b> tests</span>
+        <span class="mini-stat"><b>21</b> application call sites</span>
+        <span class="mini-stat"><b>812</b> tests</span>
         <span class="mini-stat"><b>4</b> threat rules + 1 hold</span>
       </div>
 
@@ -1042,8 +1043,13 @@ td.hot{color:var(--text); font-weight:700}
             <tr><td>GET /api/chains/{id}/abi</td><td class="rowlabel">source-verification signal for rule 1</td></tr>
             <tr><td>GET /api/user/wallet</td><td class="rowlabel">signer identity assertion</td></tr>
             <tr><td>GET /api/user/wallet/balances</td><td class="rowlabel">token discovery (curated registry)</td></tr>
+            <tr><td>GET /api/workflows</td><td class="rowlabel">workflow listing &mdash; tooling, not the agent</td></tr>
+            <tr><td>POST /api/workflows/create</td><td class="rowlabel">publishes the workflow definition</td></tr>
+            <tr><td>PATCH /api/workflows/{id}</td><td class="rowlabel">updates it in place on re-run</td></tr>
             <tr><td>simulate: true</td><td class="rowlabel">pre-flight dry runs before spending gas</td></tr>
             <tr><td>Idempotency-Key</td><td class="rowlabel">safe retries without double-execution</td></tr>
+            <tr><td>gasLimitMultiplier</td><td class="rowlabel">the fee ladder&rsquo;s two rungs</td></tr>
+            <tr><td>X-Poll-Interval-Hint</td><td class="rowlabel">server-paced status polling</td></tr>
           </tbody>
         </table>
         </div>
