@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.4](https://github.com/edycutjong/revoker/compare/v1.7.3...v1.7.4) (2026-08-12)
+
+
+### Fixes
+
+* **site:** retract a disprovable hero claim and reconcile the KeeperHub counts ([#40](https://github.com/edycutjong/revoker/issues/40)) ([6373dd5](https://github.com/edycutjong/revoker/commit/6373dd55110d1528fb281570ae9d09043a9f4ef3))
+
 ## [1.7.3](https://github.com/edycutjong/revoker/compare/v1.7.2...v1.7.3) (2026-08-09)
 
 
