@@ -582,6 +582,13 @@ td.hot{color:var(--text); font-weight:700}
   .cta-row{flex-direction:column; align-items:stretch}
   .btn{justify-content:center}
 }
+/* WCAG 2.5.8 wants a 24px target. These links land at 22-23px, and none of them
+   qualify for the inline-in-a-sentence exemption: they are the whole row. Padding
+   rather than min-height, so the baseline alignment their flex parents rely on
+   survives. Touch tablets get it too, hence the pointer query. */
+@media (max-width:720px), (pointer:coarse){
+  .tmeta a.tx, .addr-row a.addr-v, .foot-links a{padding-block:2px}
+}
 </style>
 <script>
 /* Gate the reveal animation before first paint, so nothing is ever shown and then hidden.
