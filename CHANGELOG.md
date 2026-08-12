@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.8](https://github.com/edycutjong/revoker/compare/v1.7.7...v1.7.8) (2026-08-12)
+
+
+### Fixes
+
+* **site:** correct the exposure row, the chart ceiling, and gate both in CI ([#48](https://github.com/edycutjong/revoker/issues/48)) ([224ed7a](https://github.com/edycutjong/revoker/commit/224ed7ac65d085a8df53bf85300c4915fe23c944))
+
 ## [1.7.7](https://github.com/edycutjong/revoker/compare/v1.7.6...v1.7.7) (2026-08-12)
 
 
