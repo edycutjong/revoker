@@ -44,16 +44,18 @@ test.describe('landing page tells one story', () => {
   test('the results table matches BENCHMARK.md, every cell', async ({ page }) => {
     // scope to the latency table by its caption — other tables on the page also
     // carry rows whose text happens to contain these words
-    const table = page.locator('table', { has: page.locator('caption', { hasText: 'Latency distribution' }) })
-    const rows = await table.locator('tbody tr').evaluateAll((trs) =>
-      trs.map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent!.trim())),
-    )
+    const table = page.locator('table', {
+      has: page.locator('caption', { hasText: 'Latency distribution' }),
+    })
     for (const metric of ['response', 'exposure'] as const) {
       const { p50, p95, min, max } = benchStat(metric)
-      const row = rows.find((cells) => cells[0]?.startsWith(metric))
-      expect(row, `no ${metric} row in the latency table`).toBeTruthy()
-      expect(row!.slice(1), `${metric} row must be [p50, p95, min, max] from BENCHMARK.md`)
-        .toEqual([`${p50}s`, `${p95}s`, `${min}s`, `${max}s`])
+      const row = table.locator('tbody tr').filter({ has: page.locator(`td:text-matches("^${metric} ")`) })
+      await expect(row, `no ${metric} row in the latency table`).toHaveCount(1)
+      const cells = await row.locator('td').allTextContents()
+      expect(
+        cells.slice(1).map((c) => c.trim()),
+        `${metric} row must be [p50, p95, min, max] from BENCHMARK.md`,
+      ).toEqual([`${p50}s`, `${p95}s`, `${min}s`, `${max}s`])
     }
   })
 
@@ -62,7 +64,7 @@ test.describe('landing page tells one story', () => {
   test('the chart scale clears the tallest cycle', async ({ page }) => {
     const heights = await page
       .locator('.bars a')
-      .evaluateAll((els) => els.map((e) => parseFloat((e as HTMLElement).style.height)))
+      .evaluateAll<number[], HTMLElement>((els) => els.map((e) => parseFloat(e.style.height)))
     expect(heights.length).toBeGreaterThan(0)
     expect(Math.max(...heights), 'a bar over 100% is rendered outside the frame').toBeLessThanOrEqual(100)
   })
