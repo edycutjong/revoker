@@ -1003,14 +1003,14 @@ td.hot{color:var(--text); font-weight:700}
           <div class="bars" id="bars"></div>
         </div>
         <figcaption>Response time per cycle — every bar is a real transaction; click one.
-          Cycles 10&ndash;13 hit a slow block-inclusion window (amber).</figcaption>
+          Cycles 1, 13 and 18 hit a slow block-inclusion window (amber).</figcaption>
       </figure>
 
       <div class="honesty reveal">
         <p><b>What these numbers do not include.</b> The benchmark triggers detection immediately
           rather than waiting for the poll timer, so a deployment polling every
           <code>pollIntervalMs</code> adds an average of <code>pollIntervalMs/2</code> on top.</p>
-        <p>The p95 is nearly double the p50 because four consecutive cycles hit a slow
+        <p>The p95 is nearly double the p50 because three of the twenty-five cycles hit a slow
           block-inclusion window — that variance is the network's, not the agent's, which is exactly
           why this is reported as a distribution instead of a headline number. Full per-cycle table:
           <a href="https://github.com/edycutjong/revoker" rel="noopener">BENCHMARK.md in the repo</a>.</p>
