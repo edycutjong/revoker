@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.5](https://github.com/edycutjong/revoker/compare/v1.7.4...v1.7.5) (2026-08-12)
+
+
+### Fixes
+
+* **site:** give the standalone links a 24px touch target ([#42](https://github.com/edycutjong/revoker/issues/42)) ([81f3814](https://github.com/edycutjong/revoker/commit/81f3814255d0b35c98deb403f0b6ccda7de246c0))
+
 ## [1.7.4](https://github.com/edycutjong/revoker/compare/v1.7.3...v1.7.4) (2026-08-12)
 
 
