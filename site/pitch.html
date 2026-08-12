@@ -673,9 +673,9 @@ h2{font-size:72px; line-height:1.06}
     <div class="kh-grid">
       <div class="kh-left">
         <div class="mini-stats">
-          <span class="mini-stat"><b>10</b> API surfaces</span>
-          <span class="mini-stat"><b>12</b> call sites</span>
-          <span class="mini-stat"><b>3</b> threat rules</span>
+          <span class="mini-stat"><b>11</b> API surfaces</span>
+          <span class="mini-stat"><b>21</b> call sites</span>
+          <span class="mini-stat"><b>4</b> threat rules + 1 hold</span>
         </div>
         <p class="kh-copy">Remove KeeperHub and Revoker needs seven separate systems — relayer,
           gas oracle, MEV-protected route, confirmation poller, action discovery, ABI resolution,
@@ -702,7 +702,7 @@ h2{font-size:72px; line-height:1.06}
         </div>
       </div>
     </div>
-    <aside class="speaker-notes">Your rubric asks how deeply KeeperHub is used, so here is the audit: ten distinct surfaces across twelve call sites — execution, status, chains, ABI, wallet, simulation, idempotent retries. Remove it and we would need seven separate systems plus custody. Check-and-execute and the enclave key are the two pieces we could not honestly rebuild ourselves.</aside>
+    <aside class="speaker-notes">Your rubric asks how deeply KeeperHub is used, so here is the audit: eleven distinct surfaces across twenty-one call sites — execution, status, chains, ABI, wallet, simulation, workflows, idempotent retries. Remove it and we would need seven separate systems plus custody. Check-and-execute and the enclave key are the two pieces we could not honestly rebuild ourselves.</aside>
   </section>
 
   <!-- ═══════════════ 9 · BENCHMARK ═══════════════ -->
