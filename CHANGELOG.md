@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.9](https://github.com/edycutjong/revoker/compare/v1.7.8...v1.7.9) (2026-08-12)
+
+
+### Fixes
+
+* **e2e:** drop the evaluateAll generics that blew tsc's instantiation depth ([#50](https://github.com/edycutjong/revoker/issues/50)) ([8df21a0](https://github.com/edycutjong/revoker/commit/8df21a07efedca311b65ee155373d97080704688))
+
 ## [1.7.8](https://github.com/edycutjong/revoker/compare/v1.7.7...v1.7.8) (2026-08-12)
 
 
