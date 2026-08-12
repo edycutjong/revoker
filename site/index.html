@@ -188,8 +188,12 @@ p a, li p a, .video-cap a, .foot-line a, .relay-note a{
 p a:hover, .video-cap a:hover, .foot-line a:hover, .relay-note a:hover{
   text-decoration-color:var(--accent);
 }
-/* the transaction chips are buttons-in-prose: bordered, so already non-colour-coded */
+/* The transaction chips stay undecorated at rest so a paragraph full of hashes does
+   not turn into a wall of underlines — but they are the most important links on the
+   page, so the underline comes back on hover and the arrow goes solid. */
 p a.tx, .tmeta a.tx{text-decoration:none}
+p a.tx:hover, .tmeta a.tx:hover{text-decoration:underline;
+  text-underline-offset:3px; text-decoration-thickness:1px}
 :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:4px}
 code{font-family:var(--mono); font-size:.9em; background:var(--panel2); border:1px solid var(--line);
   border-radius:5px; padding:.08em .38em; white-space:nowrap; font-variant-numeric:tabular-nums}
@@ -317,7 +321,9 @@ section{padding:72px 0; border-top:1px solid var(--line); scroll-margin-top:calc
   border-top:1px dashed var(--line); padding-top:12px}
 .tx{font-family:var(--mono); font-size:.82rem; word-break:break-all;
   transition:color .16s ease}
-.tx::after{content:"\2197"; font-size:.8em; margin-left:4px; opacity:.75}
+.tx::after{content:"\2197"; font-size:.8em; margin-left:4px; opacity:.75;
+  transition:opacity .16s ease}
+.tx:hover::after{opacity:1}
 .tresult{font-family:var(--mono); font-size:.82rem; color:var(--muted)}
 .tresult b{color:var(--text); font-weight:600}
 .tresult.ok b{color:var(--ok)}
