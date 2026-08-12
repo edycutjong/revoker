@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.6](https://github.com/edycutjong/revoker/compare/v1.7.5...v1.7.6) (2026-08-12)
+
+
+### Fixes
+
+* **site:** give the transaction links a hover state ([#43](https://github.com/edycutjong/revoker/issues/43)) ([0c3740d](https://github.com/edycutjong/revoker/commit/0c3740dfed3dbea1f674a9ab4aa62bb20a6499a9))
+
 ## [1.7.5](https://github.com/edycutjong/revoker/compare/v1.7.4...v1.7.5) (2026-08-12)
 
 
