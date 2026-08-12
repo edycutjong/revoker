@@ -737,16 +737,16 @@ h2{font-size:72px; line-height:1.06}
       <div class="stat"><span class="stat-v">46,482</span><span class="stat-l">gas per revoke (p50 = p95)</span></div>
     </div>
     <div class="chart-frame" id="chart-frame">
-      <div class="bars" id="bars" role="img" aria-label="Response time per benchmark cycle; each bar links to its transaction on Etherscan. Cycles 10 to 13 hit a slow block-inclusion window."></div>
+      <div class="bars" id="bars" role="img" aria-label="Response time per benchmark cycle; each bar links to its transaction on Etherscan. Cycles 1, 13 and 18 hit a slow block-inclusion window."></div>
     </div>
-    <p class="chart-cap">Every bar is a real transaction. Cycles 10&ndash;13 hit a slow
+    <p class="chart-cap">Every bar is a real transaction. Cycles 1, 13 and 18 hit a slow
       block-inclusion window (amber) — <b>the network&rsquo;s variance, reported as a distribution</b>,
       not hidden behind an average.</p>
     <div class="bench-foot">
       <span><b>812</b> tests — 724 TypeScript &middot; 54 Solidity &middot; 34 E2E</span>
       <span><b>100%</b> Solidity coverage — lines &middot; statements &middot; branches &middot; functions</span>
     </div>
-    <aside class="speaker-notes">Reliability, measured: twenty-five out of twenty-five cycles, 13.47 seconds median, gas identical at the p50 and p95. The amber bars are four consecutive cycles that hit a slow block window — that's the network, and we report the distribution instead of averaging it away. Behind it: 812 tests, and 100 percent coverage on every axis in both TypeScript and Solidity.</aside>
+    <aside class="speaker-notes">Reliability, measured: twenty-five out of twenty-five cycles, 13.47 seconds median, gas identical at the p50 and p95. The amber bars are three of the twenty-five cycles that hit a slow block window — cycles 1, 13 and 18 — that's the network, and we report the distribution instead of averaging it away. Behind it: 812 tests, and 100 percent coverage on every axis in both TypeScript and Solidity.</aside>
   </section>
 
   <!-- ═══════════════ 10 · LIMITS ═══════════════ -->
@@ -886,7 +886,10 @@ h2{font-size:72px; line-height:1.06}
     [13.78,'0x9b0452de80c5a1aba69bea56e324a4f4553d5dc6cd196b730f19aa6b09d4cd11'],
     [13.55,'0x0beb79e87af655197afc3c441c28e6dd9c295c778fc03e69ae91a68dab6a5947']
   ];
-  var MAX = 25.28;
+  /* Must be at or above the tallest cycle (26.55s) or that bar renders past the
+     frame and the slow cycles all flatten against the ceiling. Matches the
+     landing page's scale, which is the exposure max from BENCHMARK.md. */
+  var MAX = 26.71;
   var bars = document.getElementById('bars');
   if (bars) {
     var frame = document.getElementById('chart-frame');
