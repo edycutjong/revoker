@@ -62,10 +62,19 @@ test.describe('landing page tells one story', () => {
   /* A bar taller than the chart's ceiling is clipped by the frame, so the slow
      cycles flatten into one another and the outlier reads as smaller than it is. */
   test('the chart scale clears the tallest cycle', async ({ page }) => {
-    const heights = await page
-      .locator('.bars a')
-      .evaluateAll<number[], HTMLElement>((els) => els.map((e) => parseFloat(e.style.height)))
-    expect(heights.length).toBeGreaterThan(0)
+    // read the inline style through the typed locator API — evaluateAll needs
+    // explicit generics here, and those blow tsc's instantiation depth (TS2589)
+    const bars = page.locator('.bars a')
+    const count = await bars.count()
+    expect(count).toBeGreaterThan(0)
+
+    const heights: number[] = []
+    for (let i = 0; i < count; i++) {
+      const style = (await bars.nth(i).getAttribute('style')) ?? ''
+      const pct = /height:\s*([\d.]+)%/.exec(style)?.[1]
+      if (pct !== undefined) heights.push(Number(pct))
+    }
+    expect(heights, 'every bar should carry a percentage height').toHaveLength(count)
     expect(Math.max(...heights), 'a bar over 100% is rendered outside the frame').toBeLessThanOrEqual(100)
   })
 
