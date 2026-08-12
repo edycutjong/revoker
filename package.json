@@ -60,6 +60,10 @@
       "esbuild": ">=0.25.0",
       "tmp": ">=0.2.6",
       "uuid": ">=11.1.1"
+    },
+    "auditConfig": {
+      "_comment": "GHSA-jmr9-qjv8-65gv (extract-zip symlink traversal) has NO patched version — 2.0.1 is both the latest published release and the vulnerable one, and the package is unmaintained, so neither an upgrade nor an override can clear it. It reaches us only as dev tooling: @lhci/cli > lighthouse > puppeteer-core > @puppeteer/browsers > extract-zip, used to unpack a browser download from a trusted source during `pnpm lighthouse`. It is not in the shipped agent's dependency graph. Exempted by advisory id rather than dropping the gate to --prod, so every other high in every other dev dependency still fails CI. Re-check when @puppeteer/browsers moves off extract-zip.",
+      "ignoreGhsas": ["GHSA-jmr9-qjv8-65gv"]
     }
   }
 }

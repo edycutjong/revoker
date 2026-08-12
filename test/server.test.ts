@@ -1380,6 +1380,34 @@ describe('server.ts — POST /revoke (the workflow callback)', () => {
       expect(answer(metaRes)['revokeCallback']).toBe('unconfigured')
     })
 
+    it('refuses a secret short enough to guess, and says so rather than looking armed', async () => {
+      process.env['REVOKER_CALLBACK_SECRET'] = 'hunter2'
+      const listener = await loadServer()
+
+      const res = await call(listener, { body: GOOD, auth: 'Bearer hunter2' })
+
+      // 503, not 401: the caller presented the configured value and it still
+      // failed, so the fault being reported is the operator's, not theirs.
+      expect(status(res)).toBe(503)
+      expect(String(answer(res)['error'])).toContain('shorter than 16 characters')
+      expect(revokeMock.revokeApproval).not.toHaveBeenCalled()
+
+      const metaRes = makeRes()
+      listener(makeReq('/api/meta'), metaRes as unknown as ServerResponse)
+      expect(answer(metaRes)['revokeCallback']).toBe('unconfigured')
+    })
+
+    it('accepts a secret exactly on the sixteen-character floor', async () => {
+      const onTheLine = 'a'.repeat(16)
+      process.env['REVOKER_CALLBACK_SECRET'] = onTheLine
+      const listener = await loadServer()
+
+      const res = await call(listener, { body: GOOD, auth: `Bearer ${onTheLine}` })
+
+      expect(status(res)).toBe(200)
+      expect(revokeMock.revokeApproval).toHaveBeenCalledTimes(1)
+    })
+
     it('reports itself armed in /api/meta and on the console once configured', async () => {
       const listener = await armedServer()
 

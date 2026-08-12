@@ -64,7 +64,15 @@ const PLACEHOLDER_RE = /\$\{([A-Z0-9_]+)\}/g
  * is restricted to characters that need no escaping at any level. A bearer
  * token has no business containing a quote or a backslash in the first place.
  */
-const SAFE_SECRET_RE = /^[A-Za-z0-9._~+/=-]{8,}$/
+/**
+ * Sixteen, matching MIN_CALLBACK_SECRET_LENGTH in src/server.ts, and the two
+ * have to stay in step. A shorter floor here is not laxity, it is a trap: the
+ * deploy would report success and wire the token into the live workflow, and
+ * the agent would then refuse every callback it sent with a 503 nobody is
+ * watching for. Rejecting it at deploy time is the only point where a human is
+ * still reading the output.
+ */
+const SAFE_SECRET_RE = /^[A-Za-z0-9._~+/=-]{16,}$/
 /** `{{@nodeId:Label.field}}` — KeeperHub's own template reference syntax. */
 const TEMPLATE_REF_RE = /\{\{@[^:}]+:[^}]*\}\}/g
 
@@ -357,7 +365,7 @@ async function main(): Promise<void> {
   const secret = values['REVOKER_CALLBACK_SECRET']!
   if (!SAFE_SECRET_RE.test(secret)) {
     throw new Error(
-      'REVOKER_CALLBACK_SECRET must be at least 8 characters of [A-Za-z0-9._~+/=-].\n' +
+      'REVOKER_CALLBACK_SECRET must be at least 16 characters of [A-Za-z0-9._~+/=-].\n' +
         'It is embedded in a JSON string nested inside the workflow document, and a\n' +
         'quote or backslash there would corrupt the definition rather than be rejected.\n' +
         'Generate one with: openssl rand -base64 32 | tr -d "\\n"',
