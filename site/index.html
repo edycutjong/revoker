@@ -370,7 +370,9 @@ section{padding:72px 0; border-top:1px solid var(--line); scroll-margin-top:calc
   border-bottom:1px solid var(--line); padding:12px 8px; margin:0 -8px;
   border-radius:6px; transition:background .16s ease}
 .addr-row:hover{background:var(--panel)}
-.addr-k{flex:0 0 180px; font-size:.88rem; color:var(--muted)}
+/* 200px, not 180: "RoachMotelSpender (drainer)" measures 192px and was wrapping
+   to a second line while the other two labels sat on one. */
+.addr-k{flex:0 0 200px; font-size:.88rem; color:var(--muted)}
 .addr-v{font-family:var(--mono); font-size:.82rem; word-break:break-all}
 .addr-v::after{content:"\2197"; font-size:.8em; margin-left:4px; opacity:.75}
 
@@ -986,7 +988,7 @@ td.hot{color:var(--text); font-weight:700}
             </tr>
             <tr>
               <td class="rowlabel">exposure — threat live &rarr; revoke confirmed</td>
-              <td class="hot">13.38s</td><td>25.01s</td><td>10.47s</td><td>25.28s</td>
+              <td class="hot">13.71s</td><td>25.55s</td><td>9.72s</td><td>26.71s</td>
             </tr>
           </tbody>
         </table>
