@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.7](https://github.com/edycutjong/revoker/compare/v1.7.6...v1.7.7) (2026-08-12)
+
+
+### Fixes
+
+* **pitch:** correct the test count on the reliability slide ([#44](https://github.com/edycutjong/revoker/issues/44)) ([15cc16f](https://github.com/edycutjong/revoker/commit/15cc16f06f1743c2e1a29f6e9a83e1e6e5e7bf78))
+
 ## [1.7.6](https://github.com/edycutjong/revoker/compare/v1.7.5...v1.7.6) (2026-08-12)
 
 
