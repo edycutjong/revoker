@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.12](https://github.com/edycutjong/revoker/compare/v1.7.11...v1.7.12) (2026-08-13)
+
+
+### Documentation
+
+* correct hold count, surface the fourth rule, refresh test counts ([45b4003](https://github.com/edycutjong/revoker/commit/45b40037e6df119895e82f284b1fe5457be1d639))
+
 ## [1.7.11](https://github.com/edycutjong/revoker/compare/v1.7.10...v1.7.11) (2026-08-13)
 
 
