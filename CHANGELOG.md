@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.11](https://github.com/edycutjong/revoker/compare/v1.7.10...v1.7.11) (2026-08-13)
+
+
+### Fixes
+
+* **security:** close five findings from a full-codebase audit ([#55](https://github.com/edycutjong/revoker/issues/55)) ([4076ba9](https://github.com/edycutjong/revoker/commit/4076ba90c509d5acbcda7a1c1d3047906290ca58))
+
 ## [1.7.10](https://github.com/edycutjong/revoker/compare/v1.7.9...v1.7.10) (2026-08-13)
 
 
