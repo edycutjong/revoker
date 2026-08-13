@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.10](https://github.com/edycutjong/revoker/compare/v1.7.9...v1.7.10) (2026-08-13)
+
+
+### Fixes
+
+* **ci:** unblock the audit gate and raise the callback secret floor ([#53](https://github.com/edycutjong/revoker/issues/53)) ([d11aa52](https://github.com/edycutjong/revoker/commit/d11aa52af5a4096028abcd3168ef835be87ae395))
+
 ## [1.7.9](https://github.com/edycutjong/revoker/compare/v1.7.8...v1.7.9) (2026-08-12)
 
 
