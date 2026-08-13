@@ -465,6 +465,16 @@ describe('revokeApproval — terminal-state polling and fee escalation', () => {
 
     expect(outcome.disposition).toBe('failed')
     expect(stagesOf('revoke.failed').at(-1)!['reason']).toMatch(/insufficient funds for gas/)
+
+    // ...and the RETURNED error says the same thing as the trail. This branch
+    // covers two endings and outcome.error used to be hardcoded to the other
+    // one, so a hard execution failure was handed back as "reported success but
+    // allowance is still non-zero" — false on its face, and POST /revoke answers
+    // the workflow with this object, so the HTTP body contradicted the audit
+    // trail about the same incident.
+    expect(outcome.error).toContain('insufficient funds for gas')
+    expect(outcome.error).not.toContain('reported success')
+    expect(outcome.error).toBe(stagesOf('revoke.failed').at(-1)!['reason'])
   })
 
   it('treats an unrecognised terminal state as failed, never as confirmed', async () => {

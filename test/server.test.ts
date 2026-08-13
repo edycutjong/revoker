@@ -38,7 +38,12 @@ const httpMock = vi.hoisted(() => {
    */
   const handlers = new Map<string, (...args: unknown[]) => void>()
   const serverInstance = {
-    listen: vi.fn((_port: number, cb?: () => void) => {
+    // (port, host, cb) — server.ts binds an explicit interface now, so the
+    // callback is the THIRD argument. Typed loosely and resolved by shape so a
+    // future signature change fails on the assertion rather than by silently
+    // never running the ready callback.
+    listen: vi.fn((..._args: unknown[]) => {
+      const cb = _args.find((a) => typeof a === 'function') as (() => void) | undefined
       cb?.()
       return serverInstance
     }),
@@ -134,6 +139,11 @@ const configMock = {
   // $PORT tests below have to keep exercising that.
   get port(): number {
     return Number(process.env['PORT'] ?? 3000)
+  },
+  // Same reasoning as `port`: the bind interface is config's to resolve, and the
+  // loopback-default tests below have to exercise the real precedence.
+  get bindHost(): string {
+    return process.env['REVOKER_BIND_HOST'] ?? '127.0.0.1'
   },
 }
 vi.mock('../src/config.js', () => ({ config: configMock }))
@@ -260,6 +270,8 @@ afterEach(() => {
   delete process.env['PORT']
   delete process.env['REVOKER_DEMO']
   delete process.env['REVOKER_CALLBACK_SECRET']
+  delete process.env['REVOKER_BIND_HOST']
+  delete process.env['REVOKER_PUBLIC_DASHBOARD']
   process.removeAllListeners('SIGINT')
   process.removeAllListeners('SIGTERM')
   vi.restoreAllMocks()
@@ -292,7 +304,7 @@ describe('server.ts — startup', () => {
 
     await loadServer()
 
-    expect(httpMock.serverInstance.listen).toHaveBeenCalledWith(4321, expect.any(Function))
+    expect(httpMock.serverInstance.listen).toHaveBeenCalledWith(4321, '127.0.0.1', expect.any(Function))
     const logged = vi.mocked(console.log).mock.calls.map((c: unknown[]) => String(c[0]))
     expect(logged).toContain('  http://localhost:4321/verify')
   })
@@ -302,9 +314,64 @@ describe('server.ts — startup', () => {
 
     await loadServer()
 
-    expect(httpMock.serverInstance.listen).toHaveBeenCalledWith(3000, expect.any(Function))
+    expect(httpMock.serverInstance.listen).toHaveBeenCalledWith(3000, '127.0.0.1', expect.any(Function))
     const logged = vi.mocked(console.log).mock.calls.map((c: unknown[]) => String(c[0]))
     expect(logged).toContain('  http://localhost:3000/verify')
+  })
+
+  /**
+   * The dashboard, /api/meta and /api/stream carry no credential, so the socket
+   * is the only boundary protecting the live exposure map. These cover the
+   * default and both sides of the acknowledgement gate.
+   */
+  describe('bind interface', () => {
+    it('refuses to start a LIVE agent on a public interface without an explicit acknowledgement', async () => {
+      process.env['REVOKER_BIND_HOST'] = '0.0.0.0'
+      // Throws rather than returning, so execution stops here exactly as
+      // process.exit(1) would stop it in production — a mock that returns would
+      // let the module carry on past the refusal and bind anyway.
+      const exit = vi.spyOn(process, 'exit').mockImplementation(() => {
+        throw new Error('exited')
+      })
+      vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+      await expect(loadServer()).rejects.toThrow('exited')
+
+      expect(exit).toHaveBeenCalledWith(1)
+      expect(httpMock.serverInstance.listen).not.toHaveBeenCalled()
+      const errors = vi.mocked(console.error).mock.calls.map((c: unknown[]) => String(c[0]))
+      // The refusal has to name the variable that lifts it, or the operator's
+      // only route forward is reading this file.
+      expect(errors.join('\n')).toContain('REVOKER_PUBLIC_DASHBOARD=1')
+    })
+
+    it('binds a public interface once the operator acknowledges it, and says so on the console', async () => {
+      process.env['REVOKER_BIND_HOST'] = '0.0.0.0'
+      process.env['REVOKER_PUBLIC_DASHBOARD'] = '1'
+
+      await loadServer()
+
+      expect(httpMock.serverInstance.listen).toHaveBeenCalledWith(0, '0.0.0.0', expect.any(Function))
+      const logged = vi.mocked(console.log).mock.calls.map((c: unknown[]) => String(c[0]))
+      expect(logged.join('\n')).toContain('readable by anyone who can')
+    })
+
+    it('lets a REPLAY bind publicly with no acknowledgement — a recording has nothing to leak', async () => {
+      process.env['REVOKER_BIND_HOST'] = '0.0.0.0'
+      process.argv = [...originalArgv, '--replay']
+
+      await loadServer()
+
+      expect(httpMock.serverInstance.listen).toHaveBeenCalledWith(0, '0.0.0.0', expect.any(Function))
+    })
+
+    it('treats the whole 127.0.0.0/8 block as loopback, not just 127.0.0.1', async () => {
+      process.env['REVOKER_BIND_HOST'] = '127.0.0.53'
+
+      await loadServer()
+
+      expect(httpMock.serverInstance.listen).toHaveBeenCalledWith(0, '127.0.0.53', expect.any(Function))
+    })
   })
 
   it('loads watchlist/denylist addresses into the Watcher for a valid, well-formed file', async () => {
@@ -623,6 +690,42 @@ describe('server.ts — /api/stream (SSE)', () => {
     })
 
     req.emit('close') // clear the 15s keep-alive interval before the test ends
+  })
+
+  /**
+   * Nothing else bounds this endpoint — the callback limiter guards POST
+   * /revoke alone — so an unbounded client set is a way to exhaust the agent's
+   * sockets and timers from outside. A sentinel killed that way fails silently,
+   * looking exactly like one that is still watching.
+   */
+  it('refuses a 33rd concurrent stream rather than growing the client set without bound', async () => {
+    const listener = await loadServer()
+    const open = Array.from({ length: 32 }, () => {
+      const req = makeReq('/api/stream')
+      const res = makeRes()
+      listener(req, res as unknown as ServerResponse)
+      return req
+    })
+
+    const overflowRes = makeRes()
+    listener(makeReq('/api/stream'), overflowRes as unknown as ServerResponse)
+
+    // 503 with a Retry-After, not a stream that opens and then says nothing.
+    expect(overflowRes.writeHead).toHaveBeenCalledWith(503, {
+      'Content-Type': 'text/plain',
+      'Retry-After': '10',
+    })
+
+    // ...and a closed connection frees the slot again, so this is a cap and not
+    // a one-way latch that bricks the dashboard after enough reconnects.
+    open[0]!.emit('close')
+    const afterRes = makeRes()
+    listener(makeReq('/api/stream'), afterRes as unknown as ServerResponse)
+    expect(afterRes.writeHead).toHaveBeenCalledWith(200, expect.objectContaining({
+      'Content-Type': 'text/event-stream',
+    }))
+
+    for (const req of open.slice(1)) req.emit('close')
   })
 
   it('pushes a live audit entry to a connected client', async () => {

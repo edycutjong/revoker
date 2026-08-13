@@ -498,7 +498,12 @@ export async function revokeApproval(input: {
       // and the allowance survived anyway. Both are failures; report which.
       const reason = failureReason(landing)
       outcome.disposition = 'failed'
-      outcome.error = 'allowance still non-zero after reported success'
+      // `reason`, not a fixed string. This branch covers BOTH endings
+      // failureReason distinguishes, and hardcoding the second one meant a hard
+      // execution failure was returned to the caller as "reported success" —
+      // false on its face, and the audit trail (which got `reason`) disagreed
+      // with the HTTP body POST /revoke answered the workflow with.
+      outcome.error = reason
       audit('revoke.failed', {
         token,
         spender,
@@ -846,12 +851,15 @@ export async function revokePermit2Allowances(input: {
         allowanceAfter: remaining.toString(),
       })
     } else {
+      // See the ERC-20 path: the returned error has to be the same verdict the
+      // trail records, not a fixed sentence that is wrong in half the cases.
+      const reason = failureReason(landing)
       outcome.disposition = 'failed'
-      outcome.error = 'permit2 allowance still non-zero after reported success'
+      outcome.error = reason
       audit('revoke.failed', {
         ...detail,
         terminal: true,
-        reason: failureReason(landing),
+        reason,
         allowanceAfter: remaining.toString(),
       })
     }

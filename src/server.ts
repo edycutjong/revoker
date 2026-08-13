@@ -25,6 +25,25 @@ import { DEFAULT_POLL_INTERVAL_MS, Watcher } from './watcher.js'
  */
 
 const PORT = config.port
+const BIND_HOST = config.bindHost
+
+/**
+ * Loopback covers the whole 127.0.0.0/8 block, not just 127.0.0.1: 127.0.0.53
+ * and friends are equally unroutable, and treating them as public would refuse
+ * a bind that is in fact private.
+ *
+ * `0.0.0.0` and `::` are the ones that matter in the other direction — they are
+ * every interface, which is the default this module is moving away from.
+ */
+function isLoopbackHost(host: string): boolean {
+  return host === 'localhost' || host === '::1' || host === '[::1]' || /^127\./.test(host)
+}
+
+/**
+ * The operator stating, in as many words, that they intend the dashboard and
+ * its audit feed to be readable by anyone who can reach the port.
+ */
+const PUBLIC_DASHBOARD_ACKNOWLEDGED = process.env['REVOKER_PUBLIC_DASHBOARD'] === '1'
 
 /**
  * A curated, verbatim excerpt of audit/revoker.jsonl — four real runs against
@@ -559,7 +578,35 @@ function callbackState(dryRun: boolean): CallbackState {
   return CALLBACK_SECRET === undefined ? 'unconfigured' : 'armed'
 }
 
+/**
+ * How many browsers may hold the audit stream open at once.
+ *
+ * Every connection costs a socket, a 15s keep-alive timer and a replay of the
+ * history buffer, and nothing else on this endpoint bounds them — the callback
+ * limiter guards POST /revoke alone. Unbounded, that is a way to take the agent
+ * down from outside: a sentinel killed by socket exhaustion has failed at the
+ * one thing it exists to do, and it fails silently, looking like a process that
+ * is still watching.
+ *
+ * 32 is far above real use (a dashboard is opened by an operator, not a crowd)
+ * and far below anything that strains the process.
+ */
+const MAX_STREAM_CLIENTS = 32
+
 function handleStream(req: IncomingMessage, res: ServerResponse): void {
+  // Refused before the headers commit to an event stream, so the client gets an
+  // honest error rather than a stream that opens and then says nothing.
+  if (clients.size >= MAX_STREAM_CLIENTS) {
+    audit('watch.error', {
+      endpoint: 'GET /api/stream',
+      status: 503,
+      reason: `refused: ${MAX_STREAM_CLIENTS} dashboard streams already open`,
+    })
+    res.writeHead(503, { 'Content-Type': 'text/plain', 'Retry-After': '10' })
+    res.end(`too many dashboard streams open (limit ${MAX_STREAM_CLIENTS})`)
+    return
+  }
+
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -765,9 +812,46 @@ function main(): void {
     process.exit(1)
   })
 
-  server.listen(PORT, () => {
+  /**
+   * Refuse to publish a live agent's exposure map by accident.
+   *
+   * Only POST /revoke authenticates. The dashboard, /api/meta and the
+   * /api/stream audit feed do not, and cannot practically be made to — a
+   * browser opening /verify has nowhere to put a bearer token. So the boundary
+   * has to be the socket, and an operator who moves that boundary has to say so
+   * out loud rather than discover later what they published.
+   *
+   * A replay is exempt: data/demo-run.jsonl is a committed recording of the
+   * project's own public demo wallet, already in the repo and already in the
+   * README. There is no live exposure to leak, and making somebody set a second
+   * variable to host the canned demo would be friction protecting nothing.
+   */
+  if (!replay && !isLoopbackHost(BIND_HOST) && !PUBLIC_DASHBOARD_ACKNOWLEDGED) {
+    console.error(`\nfatal: refusing to bind a LIVE agent to ${BIND_HOST} — Revoker did not start.`)
+    console.error()
+    console.error('  Only POST /revoke is authenticated. The dashboard, /api/meta and the')
+    console.error('  /api/stream audit feed are not, so binding this beyond loopback publishes')
+    console.error("  the wallet's live exposure map: every token/spender pair, the amount at")
+    console.error('  risk on each, and which exposures a hold has withheld from the autonomous')
+    console.error('  loop — the ones that will NOT be revoked. That is a target list.')
+    console.error()
+    console.error('  KeeperHub does not need this. Point your tunnel or reverse proxy at')
+    console.error(`  127.0.0.1:${PORT} and publish ONLY /revoke; the callback works unchanged.`)
+    console.error()
+    console.error('  If you genuinely want the dashboard readable by anyone who can reach the')
+    console.error('  port, say so explicitly:')
+    console.error(`    REVOKER_PUBLIC_DASHBOARD=1 REVOKER_BIND_HOST=${BIND_HOST} pnpm verify`)
+    process.exit(1)
+  }
+
+  server.listen(PORT, BIND_HOST, () => {
     console.log('Revoker — /verify dashboard')
     console.log(`  http://localhost:${PORT}/verify`)
+    console.log(`  bound to ${BIND_HOST}${isLoopbackHost(BIND_HOST) ? ' (loopback only)' : ''}`)
+    if (!replay && !isLoopbackHost(BIND_HOST)) {
+      console.log('  WARNING  the dashboard and its audit feed are readable by anyone who can')
+      console.log('           reach this port — REVOKER_PUBLIC_DASHBOARD=1 was set')
+    }
     if (replay) {
       console.log(`  mode     REPLAY — ${recorded.length} recorded entries from data/demo-run.jsonl`)
       console.log('           a recording of past runs, NOT a live agent: nothing is watched,')
