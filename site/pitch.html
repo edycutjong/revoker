@@ -500,7 +500,7 @@ h2{font-size:72px; line-height:1.06}
       <div class="term-bar"><i></i><i></i><i></i><span class="term-title">revoker — watch &middot; Ethereum Sepolia</span></div>
       <div class="term-body">
         <div><span class="ps1">$</span> revoker watch</div>
-        <div><span class="t-mut">watching 0x5E2e&hellip;bab7 &middot; 4 rules + 1 hold armed &middot; signer: Turnkey enclave via KeeperHub</span></div>
+        <div><span class="t-mut">watching 0x5E2e&hellip;bab7 &middot; 4 rules + 2 holds armed &middot; signer: Turnkey enclave via KeeperHub</span></div>
         <div><span class="t-danger">[detect]</span>&nbsp; MockUSDC approval &rarr; 0x8eBf&hellip;892e &middot; allowance = <b>MAX_UINT256</b></div>
         <div><span class="t-danger">[rule]</span>&nbsp;&nbsp;&nbsp; unlimited-to-unverified — <b>FIRED</b> <span class="t-mut">(spender source unverified)</span></div>
         <div><span class="t-danger">[rule]</span>&nbsp;&nbsp;&nbsp; denylisted — <b>FIRED</b> <span class="t-mut">(known-bad spender)</span></div>
@@ -577,7 +577,7 @@ h2{font-size:72px; line-height:1.06}
   <section class="slide" data-title="How it works" aria-label="Slide 6: architecture">
     <p class="eyebrow">How it works</p>
     <h2>One loop. No human.</h2>
-    <svg class="arch" viewBox="0 0 1660 560" role="img" aria-label="Architecture: wallet approval state on Sepolia is polled by the Revoker agent, whose four rules and one hold channel trigger a KeeperHub check-and-execute — allowance re-read and revoke in one atomic operation, signed inside a Turnkey enclave — landing the revoke back on Sepolia; both agent and KeeperHub feed an audit trail into the local verify dashboard.">
+    <svg class="arch" viewBox="0 0 1660 560" role="img" aria-label="Architecture: wallet approval state on Sepolia is polled by the Revoker agent, whose four rules and two hold channels trigger a KeeperHub check-and-execute — allowance re-read and revoke in one atomic operation, signed inside a Turnkey enclave — landing the revoke back on Sepolia; both agent and KeeperHub feed an audit trail into the local verify dashboard.">
       <defs>
         <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0 0L10 5L0 10z" fill="var(--accent)"/>
@@ -695,7 +695,7 @@ h2{font-size:72px; line-height:1.06}
         <div class="mini-stats">
           <span class="mini-stat"><b>11</b> API surfaces</span>
           <span class="mini-stat"><b>21</b> call sites</span>
-          <span class="mini-stat"><b>4</b> threat rules + 1 hold</span>
+          <span class="mini-stat"><b>4</b> threat rules + 2 holds</span>
         </div>
         <p class="kh-copy">Remove KeeperHub and Revoker needs seven separate systems — relayer,
           gas oracle, MEV-protected route, confirmation poller, action discovery, ABI resolution,
@@ -743,10 +743,10 @@ h2{font-size:72px; line-height:1.06}
       block-inclusion window (amber) — <b>the network&rsquo;s variance, reported as a distribution</b>,
       not hidden behind an average.</p>
     <div class="bench-foot">
-      <span><b>812</b> tests — 724 TypeScript &middot; 54 Solidity &middot; 34 E2E</span>
+      <span><b>835</b> tests — 743 TypeScript &middot; 54 Solidity &middot; 38 E2E</span>
       <span><b>100%</b> Solidity coverage — lines &middot; statements &middot; branches &middot; functions</span>
     </div>
-    <aside class="speaker-notes">Reliability, measured: twenty-five out of twenty-five cycles, 13.47 seconds median, gas identical at the p50 and p95. The amber bars are three of the twenty-five cycles that hit a slow block window — cycles 1, 13 and 18 — that's the network, and we report the distribution instead of averaging it away. Behind it: 812 tests, and 100 percent coverage on every axis in both TypeScript and Solidity.</aside>
+    <aside class="speaker-notes">Reliability, measured: twenty-five out of twenty-five cycles, 13.47 seconds median, gas identical at the p50 and p95. The amber bars are three of the twenty-five cycles that hit a slow block window — cycles 1, 13 and 18 — that's the network, and we report the distribution instead of averaging it away. Behind it: 835 tests, and 100 percent coverage on every axis in both TypeScript and Solidity.</aside>
   </section>
 
   <!-- ═══════════════ 10 · LIMITS ═══════════════ -->

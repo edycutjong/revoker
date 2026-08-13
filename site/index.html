@@ -433,7 +433,7 @@ section{padding:72px 0; border-top:1px solid var(--line); scroll-margin-top:calc
 .custody b{color:var(--text)}
 
 /* ---------- rule cards ---------- */
-.rules-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:16px}
+.rules-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(400px,1fr)); gap:16px}
 .rule-card{background:var(--panel); border:1px solid var(--line); border-top:3px solid var(--danger-line);
   border-radius:12px; padding:20px; transition:border-color .16s ease, transform .16s ease}
 .rule-card:hover{border-color:var(--line2); border-top-color:var(--danger); transform:translateY(-2px)}
@@ -930,7 +930,7 @@ td.hot{color:var(--text); font-weight:700}
     <div class="container">
       <div class="sec-head">
         <p class="eyebrow">Detection</p>
-        <h2 id="rules-h">Four rules, one hold. No model.</h2>
+        <h2 id="rules-h">Four rules, two holds. No model.</h2>
         <p class="lede">Concrete, auditable threat conditions. Every firing carries its evidence
           into the audit trail, so a revoke can be justified after the fact.</p>
       </div>
@@ -953,6 +953,12 @@ td.hot{color:var(--text); font-weight:700}
           <p>The spender is on the known-bad list. No further debate — a confirmed bad actor
             with an open allowance gets revoked.</p>
           <p class="rule-src">signal: <b>data/denylist.json</b></p>
+        </div>
+        <div class="rule-card reveal">
+          <h3>permit2-long-lived</h3>
+          <p>A Permit2 allowance still valid more than 30 days out, held by a contract whose
+            source is unreadable. An expired one is left alone — the transfer would revert anyway.</p>
+          <p class="rule-src">signal: <b>Permit2 ledger</b> + block timestamp</p>
         </div>
       </div>
 
@@ -1031,8 +1037,8 @@ td.hot{color:var(--text); font-weight:700}
       <div class="mini-stats">
         <span class="mini-stat"><b>11</b> distinct API surfaces</span>
         <span class="mini-stat"><b>21</b> application call sites</span>
-        <span class="mini-stat"><b>812</b> tests</span>
-        <span class="mini-stat"><b>4</b> threat rules + 1 hold</span>
+        <span class="mini-stat"><b>835</b> tests</span>
+        <span class="mini-stat"><b>4</b> threat rules + 2 holds</span>
       </div>
 
       <p class="kh-lede">Remove KeeperHub and Revoker needs seven separate systems: a transaction

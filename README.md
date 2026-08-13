@@ -476,7 +476,7 @@ opened. Full reasoning, failure modes and the Permit2 guard-helper detour:
 | Runtime | TypeScript strict, Node 22 | `noUncheckedIndexedAccess`, `verbatimModuleSyntax` |
 | Dashboard | Node `http` + SSE, zero-dependency HTML | No CDN, no build step; backfills from the durable JSONL on connect |
 | Query surface | MCP over stdio | `src/mcp.ts` — read-only by default, writes gated behind `confirm: true` |
-| Tests | Vitest + Foundry + Playwright | 724 TypeScript + 54 Solidity + 34 E2E = **812**, 100% coverage on `src/`, `scripts/` and the contracts |
+| Tests | Vitest + Foundry + Playwright | 743 TypeScript + 54 Solidity + 38 E2E = **835**, 100% coverage on `src/`, `scripts/` and the contracts |
 
 ### Threat rules
 
@@ -870,9 +870,9 @@ its wins is not a sentinel.
 | KeeperHub client | 43 | 4xx is **not** retried; `sourceVerification` returns `unknown` rather than `unverified` when the lookup fails |
 | Revoke path | 59 | Pending is **not** reported as failed; the escalation ladder; reverts are distinguished from never landing; `executionId` on every stage |
 | Watcher | 82 | A re-granted approval **is** caught again; one hostile token cannot blind the scan; the brake, the ceiling and the bounded retry |
-| Dashboard, SSE, `POST /revoke`, `/healthz` | 101 | The callback fails **closed** with 503 when unconfigured; `/healthz` is 503 on a stale scan; the replay is not a highlight reel |
+| Dashboard, SSE, `POST /revoke`, `/healthz` | 108 | The callback fails **closed** with 503 when unconfigured; `/healthz` is 503 on a stale scan; the replay is not a highlight reel |
 | MCP surface | 49 | `revoke_approval` refuses without explicit `confirm: true` |
-| Config + demo mode | 53 | Demo mode cannot execute, whatever flags are passed; the allow-list loader |
+| Config + demo mode | 65 | Demo mode cannot execute, whatever flags are passed; the allow-list loader |
 | Chain reads | 27 | A malformed log is dropped, never turned into a fabricated exposure |
 | Audit trail | 12 | The envelope's `stage` always wins over a detail key of the same name |
 | Watchlist / deny-list loaders | 10 | A malformed hand-edited file degrades to an empty list, never a throw |
@@ -880,10 +880,10 @@ its wins is not a sentinel.
 | `kh` CLI wrapper | 16 | "not installed" is distinguished from "ran and said no" |
 | Repo invariants (CI + Makefile) | 28 | The gate really needs every job; `make` targets and pnpm scripts cannot drift apart |
 | Operator scripts | 155 | seed, seed:permit2, deploy:view, workflow deploy, bench, spike — all idempotent |
-| **TypeScript total** | **724** | **100% statements / branches / functions / lines** on `src/` **and** `scripts/`, gated in [`vitest.config.ts`](./vitest.config.ts) |
+| **TypeScript total** | **743** | **100% statements / branches / functions / lines** on `src/` **and** `scripts/`, gated in [`vitest.config.ts`](./vitest.config.ts) |
 | Solidity | 54 | **100% coverage.** The drain **succeeds and takes zero** post-revoke; 6 fuzz suites |
-| Playwright E2E | 34 | The published site's headline figures must match `BENCHMARK.md`, or CI fails |
-| **Total** | **812** | |
+| Playwright E2E | 38 | The published site's headline figures must match `BENCHMARK.md`, or CI fails |
+| **Total** | **835** | |
 
 CI runs six jobs behind a gate: quality (lint, types, coverage), security
 (`pnpm audit`, gitleaks over full history, a credential grep that fails the
@@ -1033,10 +1033,10 @@ or demo mode the route is a plain `404` — absent rather than merely disabled.
 
 ```bash
 pnpm check               # fast local gate: lint, types, TS coverage, contract tests
-pnpm test                # 724 TypeScript tests
+pnpm test                # 743 TypeScript tests
 pnpm contracts:test      # 54 Solidity tests
 pnpm contracts:coverage  # prove 100%
-pnpm e2e                 # 34 Playwright tests over the published pages
+pnpm e2e                 # 38 Playwright tests over the published pages
 pnpm lint                # eslint
 pnpm typecheck           # tsc --noEmit
 make submission-check    # placeholders, required links, tracked images: READY / NOT READY
@@ -1095,7 +1095,7 @@ workflows/
 - [x] Gas escalation ladder + terminal-state polling
 - [x] Reproducible seed + p50/p95 benchmark, live SSE dashboard
 - [x] Three refusal rails — per-exposure holds, the correlated-failure brake, a rolling 24h ceiling
-- [x] CI, security scanning, 812 tests (100% coverage on `src/`, `scripts/` and contracts)
+- [x] CI, security scanning, 835 tests (100% coverage on `src/`, `scripts/` and contracts)
 - [ ] Deploy the sentinel workflow (blocked on a Pro-tier plan, not on code)
 - [ ] Durable cursor, so a restart does not lose grants older than the log window
 - [ ] Indexer-backed token discovery, removing the watchlist limit
