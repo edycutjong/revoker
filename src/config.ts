@@ -92,11 +92,16 @@ if (auditLogFromFile !== undefined && process.env['REVOKER_AUDIT_LOG'] === undef
  * Anything that is not an explicit yes is off. An unrecognised value is off too,
  * and says so, rather than being guessed in either direction.
  */
-const DEMO_FLAG = (process.env['REVOKER_DEMO'] ?? '').trim().toLowerCase()
+const DEMO_RAW = process.env['REVOKER_DEMO'] ?? ''
+const DEMO_FLAG = DEMO_RAW.trim().toLowerCase()
 const DEMO = ['1', 'true', 'yes', 'on'].includes(DEMO_FLAG)
-if (!DEMO && DEMO_FLAG !== '' ) {
+// Echoes the value verbatim rather than re-reading the environment: reaching
+// this line already proves the variable held a non-empty string, so a second
+// `?? ''` would be a branch that cannot be taken — and this repo holds src/ at
+// 100% branch coverage, which is exactly the discipline that surfaces one.
+if (!DEMO && DEMO_FLAG !== '') {
   console.warn(
-    `REVOKER_DEMO="${process.env['REVOKER_DEMO'] ?? ''}" is not an enabling value — demo mode is OFF. ` +
+    `REVOKER_DEMO="${DEMO_RAW}" is not an enabling value — demo mode is OFF. ` +
       'Use REVOKER_DEMO=1 to enable it, or unset the variable entirely.',
   )
 }
