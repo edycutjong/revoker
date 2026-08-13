@@ -344,7 +344,7 @@ describe('deploy-workflow — refusing to run', () => {
 
     await run()
 
-    expect(reported()).toContain('REVOKER_CALLBACK_SECRET must be at least 8 characters')
+    expect(reported()).toContain('REVOKER_CALLBACK_SECRET must be at least 16 characters')
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -353,12 +353,15 @@ describe('deploy-workflow — refusing to run', () => {
 
     await run()
 
-    expect(reported()).toContain('REVOKER_CALLBACK_SECRET must be at least 8 characters')
+    expect(reported()).toContain('REVOKER_CALLBACK_SECRET must be at least 16 characters')
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('accepts a base64 secret of the shape `openssl rand -base64 32` produces', async () => {
-    process.env['REVOKER_CALLBACK_SECRET'] = 'aB3+xY/z9Q=='
+    // A real 32-byte base64 secret, at its true length of 44 — the command in
+    // the error message has to produce something this check accepts, and a
+    // token-sized fixture would let the floor regress without failing here.
+    process.env['REVOKER_CALLBACK_SECRET'] = 'aB3+xY/z9QcDeFgHiJkLmNoPqRsTuVwXyZ012345678='
 
     await run()
 
@@ -372,7 +375,7 @@ describe('deploy-workflow — refusing to run', () => {
       .find((h) => h !== undefined)
     // The nested JSON string still parses, and carries the secret intact.
     expect(JSON.parse(headers ?? '{}')).toMatchObject({
-      Authorization: 'Bearer aB3+xY/z9Q==',
+      Authorization: 'Bearer aB3+xY/z9QcDeFgHiJkLmNoPqRsTuVwXyZ012345678=',
     })
   })
 })

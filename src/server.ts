@@ -295,13 +295,30 @@ function labelAsReplay(page: string, entries: AuditEntry[]): string {
  */
 
 /**
+ * The floor a shared secret has to clear to be treated as one.
+ *
+ * The rate limiter bounds online guessing but does not end it: at 20 attempts a
+ * minute a four-character lowercase secret still falls inside a day, and the
+ * thing it unlocks submits transactions. Sixteen characters puts even an
+ * all-lowercase secret far enough out of reach that the limiter is what stops
+ * the attack rather than what merely slows it.
+ */
+const MIN_CALLBACK_SECRET_LENGTH = 16
+
+/**
  * The shared secret, resolved once at load.
  *
  * An exported-but-blank variable is not a credential, so it is normalised to
- * "unset" here rather than being accepted as a one-character-long password.
+ * "unset" here rather than being accepted as a one-character-long password —
+ * and neither is a token short enough to guess, which is normalised the same
+ * way. Both leave the endpoint closed: a secret that cannot do its job should
+ * disarm the callback loudly at startup, not sit there looking armed.
  */
 const rawCallbackSecret = process.env['REVOKER_CALLBACK_SECRET'] ?? ''
-const CALLBACK_SECRET = rawCallbackSecret === '' ? undefined : rawCallbackSecret
+const CALLBACK_SECRET_TOO_SHORT =
+  rawCallbackSecret !== '' && rawCallbackSecret.length < MIN_CALLBACK_SECRET_LENGTH
+const CALLBACK_SECRET =
+  rawCallbackSecret === '' || CALLBACK_SECRET_TOO_SHORT ? undefined : rawCallbackSecret
 
 /** Enough for the four fields the workflow sends, and nothing like enough to be a payload. */
 const CALLBACK_BODY_LIMIT_BYTES = 4_096
@@ -468,8 +485,12 @@ async function handleRevokeCallback(req: IncomingMessage, res: ServerResponse): 
     return refuseCallback(
       res,
       503,
-      'REVOKER_CALLBACK_SECRET is not set — the workflow callback is closed. ' +
-        'Set the same value in the agent environment and in the workflow HTTP Request node.',
+      CALLBACK_SECRET_TOO_SHORT
+        ? `REVOKER_CALLBACK_SECRET is shorter than ${MIN_CALLBACK_SECRET_LENGTH} characters — ` +
+            'the workflow callback is closed. Generate one with `openssl rand -hex 32` and set ' +
+            'the same value in the agent environment and in the workflow HTTP Request node.'
+        : 'REVOKER_CALLBACK_SECRET is not set — the workflow callback is closed. ' +
+            'Set the same value in the agent environment and in the workflow HTTP Request node.',
     )
   }
 
