@@ -1,6 +1,6 @@
 {
   "name": "revoker",
-  "version": "1.7.9",
+  "version": "1.7.10",
   "private": true,
   "type": "module",
   "description": "Autonomous approval-drainer sentinel that lands approve(spender,0) through KeeperHub before the drain completes.",
@@ -63,7 +63,9 @@
     },
     "auditConfig": {
       "_comment": "GHSA-jmr9-qjv8-65gv (extract-zip symlink traversal) has NO patched version — 2.0.1 is both the latest published release and the vulnerable one, and the package is unmaintained, so neither an upgrade nor an override can clear it. It reaches us only as dev tooling: @lhci/cli > lighthouse > puppeteer-core > @puppeteer/browsers > extract-zip, used to unpack a browser download from a trusted source during `pnpm lighthouse`. It is not in the shipped agent's dependency graph. Exempted by advisory id rather than dropping the gate to --prod, so every other high in every other dev dependency still fails CI. Re-check when @puppeteer/browsers moves off extract-zip.",
-      "ignoreGhsas": ["GHSA-jmr9-qjv8-65gv"]
+      "ignoreGhsas": [
+        "GHSA-jmr9-qjv8-65gv"
+      ]
     }
   }
 }
