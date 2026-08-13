@@ -272,6 +272,47 @@ describe('demo mode (REVOKER_DEMO)', () => {
     expect(process.argv).not.toContain('--dry-run')
   })
 
+  /**
+   * `Boolean(process.env.REVOKER_DEMO)` is true for the STRING "0", so an
+   * operator disabling demo mode the obvious way switched it on: dead key,
+   * --dry-run forced, and an agent that silently executes nothing. It fails
+   * safe — it can never enable a write — but a sentinel that has quietly
+   * stopped defending the wallet is the outage this product exists to prevent.
+   */
+  it.each(['0', 'false', 'no', 'off', ''])(
+    'stays OFF for REVOKER_DEMO=%o rather than treating any value as consent',
+    async (value) => {
+      process.env['REVOKER_DEMO'] = value
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+      const { config } = await import('../src/config.js')
+
+      expect(config.demo).toBe(false)
+      expect(process.argv).not.toContain('--dry-run')
+      expect(() => config.apiKey).toThrow(/Missing KH_API_KEY/)
+    },
+  )
+
+  it('says so when the value is unrecognised, instead of silently picking a side', async () => {
+    process.env['REVOKER_DEMO'] = '0'
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    await import('../src/config.js')
+
+    expect(warn.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).toContain(
+      'demo mode is OFF',
+    )
+  })
+
+  it.each(['1', 'true', 'yes', 'on', 'TRUE', ' 1 '])(
+    'enables demo mode for the explicit value %o',
+    async (value) => {
+      process.env['REVOKER_DEMO'] = value
+      const { config } = await import('../src/config.js')
+      expect(config.demo).toBe(true)
+    },
+  )
+
   it('serves the public demo wallet and a sentinel key instead of throwing', async () => {
     process.env['REVOKER_DEMO'] = '1'
     const { config } = await import('../src/config.js')

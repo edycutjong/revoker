@@ -121,18 +121,37 @@ const stats = { scans: 0, threats: 0, revokes: 0, failures: 0, pending: 0, aband
 let explorer = 'https://sepolia.etherscan.io'
 
 fetch('/api/meta').then(r => r.json()).then(m => {
-  explorer = m.explorer || explorer
+  explorer = safeBase(m.explorer) || explorer
   document.getElementById('meta').innerHTML =
-    `watching <b>${short(m.wallet)}</b> on <b>${m.network}</b> (${m.chainId})`
+    `watching <b>${short(m.wallet)}</b> on <b>${esc(m.network)}</b> (${esc(m.chainId)})`
   const dot = document.getElementById('dot')
   if (!m.dryRun) dot.classList.add('armed')
 }).catch(() => {})
 
-function short(a) {
-  return a && a.length > 14 ? a.slice(0, 8) + '…' + a.slice(-6) : (a || '')
-}
 function esc(s) {
-  return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]))
+  return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]))
+}
+// Escapes, so `short(x)` is safe to interpolate on its own and never needs an
+// esc() around it. Previously it returned raw input and half its call sites
+// wrapped it while the other half did not — every `spender` on this page went
+// in unescaped. Nothing could exploit that today (spenders are viem-decoded
+// addresses, or pass ADDRESS_RE in parseCallback), but "safe because of what
+// the callers happen to pass" is not a property this file can keep. One rule:
+// esc() and short() both return escaped output, and everything goes through one
+// of them.
+function short(a) {
+  const s = a == null ? '' : String(a)
+  return esc(s.length > 14 ? s.slice(0, 8) + '…' + s.slice(-6) : s)
+}
+// The explorer base is operator config, and it lands in an href. Anything that
+// is not http(s) — `javascript:` above all — is dropped rather than rendered.
+function safeBase(u) {
+  try {
+    const parsed = new URL(String(u))
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+      ? parsed.href.replace(/\/+$/, '')
+      : ''
+  } catch { return '' }
 }
 
 const KIND = {
@@ -196,7 +215,7 @@ function render(e) {
 
   let detail = ''
   if (e.stage === 'threat.detected') {
-    detail += `token <b>${esc(e.symbol || short(e.token))}</b> · spender <b>${short(e.spender)}</b><br>`
+    detail += `token <b>${e.symbol ? esc(e.symbol) : short(e.token)}</b> · spender <b>${short(e.spender)}</b><br>`
     detail += `allowance <b>${esc(e.allowance)}</b> · at risk <b>${esc(e.atRisk)}</b><br>`
     for (const r of (e.rules || [])) {
       detail += `<span class="rule">${esc(r.rule)} — ${esc(r.reason)}</span>`
@@ -206,7 +225,7 @@ function render(e) {
     if (e.gasUsedWei) detail += ` · gas <b>${esc(e.gasUsedWei)}</b>`
     if (e.sponsored) detail += ` · <b>sponsored</b>`
     if (e.txHash) {
-      detail += `<br><a href="${explorer}/tx/${esc(e.txHash)}" target="_blank" rel="noopener">${esc(e.txHash)}</a>`
+      detail += `<br><a href="${esc(explorer)}/tx/${esc(e.txHash)}" target="_blank" rel="noopener">${esc(e.txHash)}</a>`
     }
   } else if (e.stage === 'watch.scan') {
     // The two surfaces report different counters: the ERC-20 sweep carries
@@ -223,20 +242,20 @@ function render(e) {
   } else if (FAILURE.has(e.stage)) {
     // watch.error carries the exposure it could not evaluate; a whole-scan
     // failure carries none, which is how the two are told apart.
-    if (e.token) detail += `token <b>${esc(short(e.token))}</b> · spender <b>${short(e.spender)}</b><br>`
+    if (e.token) detail += `token <b>${short(e.token)}</b> · spender <b>${short(e.spender)}</b><br>`
     detail += esc(e.error || e.reason || '')
     if (e.txHash) {
-      detail += `<br><a href="${explorer}/tx/${esc(e.txHash)}" target="_blank" rel="noopener">${esc(e.txHash)}</a>`
+      detail += `<br><a href="${esc(explorer)}/tx/${esc(e.txHash)}" target="_blank" rel="noopener">${esc(e.txHash)}</a>`
     }
   } else if (e.stage === 'revoke.pending') {
     // The word "failed" appears nowhere on this row, because it did not.
     detail += esc(e.reason || '')
     if (e.escalations !== undefined) detail += `<br>fee escalations <b>${esc(e.escalations)}</b>`
     if (e.txHash) {
-      detail += `<br><a href="${explorer}/tx/${esc(e.txHash)}" target="_blank" rel="noopener">${esc(e.txHash)}</a>`
+      detail += `<br><a href="${esc(explorer)}/tx/${esc(e.txHash)}" target="_blank" rel="noopener">${esc(e.txHash)}</a>`
     }
   } else if (e.stage === 'revoke.abandoned') {
-    if (e.token) detail += `token <b>${esc(short(e.token))}</b> · spender <b>${short(e.spender)}</b><br>`
+    if (e.token) detail += `token <b>${short(e.token)}</b> · spender <b>${short(e.spender)}</b><br>`
     detail += `attempts <b>${esc(e.attempts)}</b> · ${esc(e.reason || '')}`
     if (e.lastError) detail += `<br>last error: ${esc(e.lastError)}`
   } else if (e.stage === 'revoke.skipped') {

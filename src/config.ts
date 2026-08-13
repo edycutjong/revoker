@@ -79,7 +79,32 @@ if (auditLogFromFile !== undefined && process.env['REVOKER_AUDIT_LOG'] === undef
  * organisation, and "the value you configured was quietly used anyway" is
  * exactly the surprise that turns a safety guarantee into a probability.
  */
-const DEMO = Boolean(process.env['REVOKER_DEMO'])
+/**
+ * Opt-in by VALUE, not by presence.
+ *
+ * `Boolean(process.env['REVOKER_DEMO'])` is true for the string "0" and for
+ * "false", so an operator turning demo mode off the obvious way turned it on:
+ * a dead API key, --dry-run forced, and a sentinel that quietly executes
+ * nothing. It fails safe in the sense that it can never enable a write — but
+ * "your agent silently stopped defending the wallet" is the outage this product
+ * exists to prevent, so getting it from `REVOKER_DEMO=0` is not acceptable.
+ *
+ * Anything that is not an explicit yes is off. An unrecognised value is off too,
+ * and says so, rather than being guessed in either direction.
+ */
+const DEMO_RAW = process.env['REVOKER_DEMO'] ?? ''
+const DEMO_FLAG = DEMO_RAW.trim().toLowerCase()
+const DEMO = ['1', 'true', 'yes', 'on'].includes(DEMO_FLAG)
+// Echoes the value verbatim rather than re-reading the environment: reaching
+// this line already proves the variable held a non-empty string, so a second
+// `?? ''` would be a branch that cannot be taken — and this repo holds src/ at
+// 100% branch coverage, which is exactly the discipline that surfaces one.
+if (!DEMO && DEMO_FLAG !== '') {
+  console.warn(
+    `REVOKER_DEMO="${DEMO_RAW}" is not an enabling value — demo mode is OFF. ` +
+      'Use REVOKER_DEMO=1 to enable it, or unset the variable entirely.',
+  )
+}
 
 /**
  * Obviously fake, and fake in a way that cannot be mistaken for a redacted real
@@ -259,6 +284,29 @@ export const config = {
    * documentation told you to use.
    */
   port: Number(read('PORT') ?? 3000),
+
+  /**
+   * The interface the /verify dashboard binds to. LOOPBACK BY DEFAULT.
+   *
+   * `server.listen(PORT)` with no host binds 0.0.0.0 — every interface — and
+   * only POST /revoke on that server carries a credential. Everything else (the
+   * dashboard, /api/meta, and the /api/stream audit feed) is open, so a bind
+   * that reaches the internet publishes the wallet's entire live exposure map:
+   * every token/spender pair, the amount at risk on each, which rules fired,
+   * and — worst of it — which exposures a hold has withheld from the autonomous
+   * loop and will therefore NOT be revoked. That is a target list for precisely
+   * the attacker this agent exists to beat.
+   *
+   * It has to default closed rather than be documented as a caveat, because
+   * .env.example tells operators the callback URL must be publicly reachable.
+   * Following that instruction with a 0.0.0.0 default is how the exposure map
+   * ends up on the internet by doing what the documentation said.
+   *
+   * The documented deployment is unaffected: a tunnel or a reverse proxy
+   * connects to loopback. Only a direct all-interfaces bind changes, and that is
+   * the case being fixed — see the acknowledgement gate in server.ts.
+   */
+  bindHost: read('REVOKER_BIND_HOST') ?? '127.0.0.1',
 
   /** Organization-scoped KeeperHub API key (kh_ prefix). */
   get apiKey(): string {
