@@ -263,9 +263,17 @@ function labelAsReplay(page: string, entries: AuditEntry[]): string {
   ;(function () {
     var conn = document.getElementById('conn')
     var dot = document.getElementById('dot')
+    // Both writes are guarded on the value ALREADY being wrong. classList.remove()
+    // runs the DOMTokenList update steps unconditionally, which set the class
+    // attribute even when nothing was removed — and setting an attribute queues an
+    // attribute MutationRecord whether or not the value changed. Unguarded, the
+    // observer below re-entered relabel() forever in a microtask loop, starving the
+    // event loop: DOMContentLoaded never fired and the page never painted.
     function relabel() {
       if (conn.textContent !== 'replay') conn.textContent = 'replay'
-      dot.classList.remove('live', 'armed')
+      if (dot.classList.contains('live') || dot.classList.contains('armed')) {
+        dot.classList.remove('live', 'armed')
+      }
     }
     new MutationObserver(relabel).observe(conn, { childList: true, characterData: true, subtree: true })
     new MutationObserver(relabel).observe(dot, { attributes: true, attributeFilter: ['class'] })
