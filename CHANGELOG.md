@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.13](https://github.com/edycutjong/revoker/compare/v1.7.12...v1.7.13) (2026-08-19)
+
+
+### Fixes
+
+* **verify:** stop the replay banner starving the event loop ([#58](https://github.com/edycutjong/revoker/issues/58)) ([3013deb](https://github.com/edycutjong/revoker/commit/3013deb47d5de9b038af7c4cdac34f73b5ce2399))
+
 ## [1.7.12](https://github.com/edycutjong/revoker/compare/v1.7.11...v1.7.12) (2026-08-13)
 
 
