@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.14](https://github.com/edycutjong/revoker/compare/v1.7.13...v1.7.14) (2026-08-19)
+
+
+### Documentation
+
+* record the Agents Onchain finalist placing on the hackathon badge ([ad81ce2](https://github.com/edycutjong/revoker/commit/ad81ce20fdaca44cdef654ab6fbbcd5d8daa0c3c))
+
 ## [1.7.13](https://github.com/edycutjong/revoker/compare/v1.7.12...v1.7.13) (2026-08-19)
 
 
