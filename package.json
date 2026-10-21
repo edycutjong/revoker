@@ -50,7 +50,7 @@
     "vitest": "^3.2.7"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "viem": "^2.21.55",
     "zod": "^3.25.76"
   },
